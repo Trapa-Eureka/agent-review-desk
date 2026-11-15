@@ -26,10 +26,10 @@ export interface RunResult {
   error?: Error;
 }
 /** Runs a program with optional standard input. Tests replace it. */
-export type RunFn = (command: string, args: string[], input?: string) => RunResult;
+export type RunFn = (command: string, args: string[], input?: string, cwd?: string) => RunResult;
 
-export const defaultRun: RunFn = (command, args, input) => {
-  const result = spawnSync(command, args, { ...(input === undefined ? {} : { input }), encoding: "utf8", timeout: 20_000, maxBuffer: 1024 * 1024 });
+export const defaultRun: RunFn = (command, args, input, cwd) => {
+  const result = spawnSync(command, args, { ...(input === undefined ? {} : { input }), ...(cwd === undefined ? {} : { cwd }), encoding: "utf8", timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error ? { error: result.error } : {}) };
 };
 

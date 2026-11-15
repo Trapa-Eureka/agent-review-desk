@@ -5,6 +5,7 @@ A workspace that records what AI coding agents (Claude Code, Codex) do on your m
 > **Status: early development (Phase 3 complete, not yet run live).**
 > The free, local tier works end to end: record Claude Code sessions (`ard init`) or any agent (`ard run`), review them in a local web UI (`ard review`), approve or reject whole sessions, and have risky actions wait for your approval before they run.
 > The paid **Team** tier is built and tested too: `ard login`, `ard sync` to a team workspace, roles, single sign-on, and monthly billing through **Paddle** and **Dodo Payments**. What has not been done is a *live* payment or a *live* sign-in with real provider accounts: see [Running Agent Review Desk Cloud](docs/cloud-selfhosting.md#7-first-live-test-what-to-check-yourself). Everything marked _(planned)_ below describes the intended behavior.
+> Paid plans are still only planned: nothing is for sale yet.
 
 ## Overview
 
@@ -34,6 +35,9 @@ It is built for development teams and agencies that use AI agents and need an au
 | Approve / reject a whole session after the fact | Done |
 | **Pre-approval**: risky actions pause the agent until you approve them in the UI | Done (opt-in) |
 | Default policy pack (14 rules) with per-rule overrides in `ard.config.json` | Done |
+| Codex hooks (`ard init --agent codex`): sessions, shell commands and their output; risky-command blocking | Done (no exit code from Codex; checked on Codex 0.169.0) |
+| `ard key set`: keep your Anthropic API key in the system keychain for the AI summary | Done (macOS, Linux with `secret-tool`) |
+| `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (not yet tried on a real pull request) |
 | AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tested against a stand-in server, not the real API) |
 | Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
 | `ard login` / `logout` / `whoami`: sign in to a cloud workspace with a short code confirmed in the browser | Done |
@@ -80,6 +84,20 @@ After the first release _(planned)_ you will be able to install the CLI with:
 npm install -g agent-review-desk
 ```
 
+## Quick start
+
+You need the build from [Installation](#installation) and the `ard` alias. Then, for any project:
+
+1. **Register the recorder, once per project.** `cd your-project`, then
+   - Claude Code: `ard init`, and restart Claude Code.
+   - Codex: `ard init --agent codex`, then open Codex and run `/hooks` to trust the new hooks.
+   - Any other agent (or to also catch file changes through git): `ard run -- <agent>` instead of starting it directly.
+2. **Work as usual.** Everything the agent does is written to `.ard/` in that project (git-ignored, on your machine only).
+3. **Review:** run `ard review` in the same folder, open the link it prints, open a session, read the timeline, and press **Approve session** or **Reject session**.
+4. **Undo any time:** `ard init --remove` (or `ard init --agent codex --remove`). Your recordings stay.
+
+Optional extras, each explained below: `ard init --approvals` pauses risky commands until you approve them in the UI; `ard key set` plus **Summarize with AI** gives a one-paragraph summary of a long session; `ard screenshot <file>` attaches a picture; `ard pr-status` and `ard pr-comment` show your review on a pull request (and can block merging until you have reviewed) without GitHub Actions.
+
 ## Running
 
 ### Record a Claude Code session (hooks)
@@ -97,6 +115,26 @@ From now on every session, tool call, shell command and file edit Claude Code ma
 - `ard init` adds `.ard/` to `.gitignore`. It never overwrites a settings file it cannot parse, and it leaves your own hooks untouched.
 - `ard init --remove` takes ard's hooks out again. Your recordings in `.ard/` are kept.
 
+### Record a Codex session (hooks)
+
+```bash
+cd your-project
+ard init --agent codex   # writes this project's .codex/hooks.json and creates .ard/
+# open Codex in the project and run /hooks: review and trust the new hooks
+codex
+```
+
+Codex does not run a hook until you have reviewed it with `/hooks`, and asks again whenever the file changes, so `ard init` cannot switch it on by itself. `ard init --agent codex --remove` takes ard's hooks out again; your own hooks in that file are never touched.
+
+What Codex's hooks give ard (checked against payloads captured from a real Codex 0.169.0 session):
+
+- **Sessions, every shell command and its output**, and the other tool calls. ✔
+- **No exit code.** Codex sends a command's output as one string and nothing else: a failing command looks like a quiet success. The review UI therefore shows no exit badge for Codex commands.
+- **No file edits.** The Codex model wrote files with shell commands (`printf … > file`), which are just commands. `apply_patch` calls would be turned into diffs, but that follows Codex's documented patch format and has **not been seen in a real payload**. For file changes, run `ard run -- codex` as well: hooks and wrapper link up automatically, and the wrapper finds the changed files through git.
+- **Risky-command blocking** (`ard init --agent codex --approvals`): **verified on Codex 0.169.0 for shell commands.** A hook that exits with code 2, or answers with a JSON "deny", stopped the command from running, and an allowed command ran normally.
+- **A timeout means "run it".** Also verified: if a hook is still waiting when its timeout passes, Codex stops waiting and **runs the command anyway**. So on Codex ard waits for your decision for at most **9 minutes** (whatever `timeoutSeconds` says; Claude Code keeps the configured value), and registers the hook with Codex's documented default timeout of 10 minutes, so ard always gives up and blocks first.
+- Not verified: how Codex words the blocking reason to you and to the model, blocking inside `codex exec`, and `apply_patch` calls.
+
 ### Record any agent (wrapper)
 
 ```bash
@@ -107,7 +145,7 @@ The wrapper runs the program with your terminal attached and records the session
 
 | | Hooks (`ard init`) | Wrapper (`ard run`) |
 |---|---|---|
-| Works with | Claude Code | any program |
+| Works with | Claude Code, Codex | any program |
 | Sees commands and their output | Yes | No |
 | Sees individual tool calls | Yes | No |
 | Sees file edits | Yes (edited text) | Yes (git diff) |
@@ -149,6 +187,26 @@ Prefer not to save it? Set `ANTHROPIC_API_KEY=...` for that terminal instead; if
 - **The default model is `claude-opus-5-5`.** `ARD_SUMMARY_MODEL=claude-haiku-5-5` is much cheaper (about 1/40 of the price per token); `claude-sonnet-5-5` is in between. Other values are ignored.
 - **Treat it as a hint, not a verdict.** A summary can be wrong or miss things. The recorded text is handled as untrusted data (an agent's output can contain text that looks like instructions to the summarizer), the summary is shown as plain text, and it never recommends approving: the timeline stays the record.
 - Not verified against the real Anthropic API yet: it was tested with unit tests and against a local stand-in server that mimics the API. Try it once with your key.
+
+### Gate a pull request without GitHub Actions
+
+Make "the agent sessions behind this branch were reviewed and approved" visible on the pull request, and optionally required before merging, using only your own machine and the [GitHub CLI](https://cli.github.com) (`gh auth login` once). Nothing runs on GitHub's servers, so there is nothing to bill.
+
+```bash
+ard review                       # approve (or reject) the sessions behind the branch, as usual
+ard pr-status --dry-run          # shows which sessions it found and what it would post; posts nothing
+ard pr-status                    # posts the commit status "ard/review" on the PR's latest commit
+ard pr-comment                   # posts (or updates) a PR comment listing the sessions and decisions
+```
+
+- **The status** is `success` when every session was approved, `failure` if one was rejected, `pending` while some are not reviewed yet (and `success` when no agent session was recorded for the branch).
+- **To block merging until you have reviewed:** in the repository settings, under the branch protection rule (or ruleset) for your main branch, turn on *Require status checks to pass* and add `ard/review`. With a ruleset, leave the source on *any source*. GitHub accepts commit statuses as required checks, not only Actions checks.
+- **Post it again after every push.** A status belongs to one commit, so a new commit has none, and the merge button stays blocked until you run `ard pr-status` again. That is the safe direction.
+- **Which sessions belong to the PR?** Without `--session`, those that started since the branch left its base branch. That is a guess (the list is printed: check it); name them with `--session <id>` (repeatable) when it is wrong. Sessions are listed by `ard review`.
+- **The comment contains counts and review decisions only**: never code, command output, file names or paths, because a pull request can be public. It updates its own earlier comment instead of adding a new one, and it only ever edits your own comments.
+- `--pr <number>` targets another pull request. `--context <name>` renames the status (letters, digits, `. _ / -`).
+
+Limits, honestly: anyone with write access can post a status named `ard/review` too, so this stops an *accidental* merge without review, not a determined one (the same people can merge anyway). The review happens on the author's machine; GitHub only records who posted the status. Not yet tried against a real pull request, only against a stand-in for `gh` and against the real `gh` for reading: start with `--dry-run`.
 
 ### Approvals: pause risky actions until you say so
 
@@ -359,7 +417,7 @@ agent-review-desk/
 - [x] **Phase 1** — event schema, `ard init`, `ard hook`, `ard run`
 - [x] **Phase 2** — SQLite storage layer, review UI, approve/reject, pre-approval of risky actions
 - [x] **Phase 3** — `ard login`, cloud sync, billing (Paddle + Dodo Payments), roles, SSO. Built and tested; first live purchase / sign-in still to do
-- [ ] **Phase 4** — optional: ~~bring-your-own-key AI summaries~~ (done), multi-agent view, GitHub Action
+- [ ] **Phase 4** — optional: ~~bring-your-own-key AI summaries~~ (done), ~~Codex hook adapter~~ (done), ~~PR gate and comment without Actions~~ (done: `ard pr-status`, `ard pr-comment`), multi-agent view
 
 ## Contributing
 

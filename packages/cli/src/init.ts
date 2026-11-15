@@ -32,13 +32,13 @@ export interface InitResult {
   warnings: string[];
 }
 
-type Json = Record<string, unknown>;
-interface HookEntry {
+export type Json = Record<string, unknown>;
+export interface HookEntry {
   type?: unknown;
   command?: unknown;
   [key: string]: unknown;
 }
-interface HookGroup {
+export interface HookGroup {
   matcher?: unknown;
   hooks?: unknown;
   [key: string]: unknown;
@@ -49,7 +49,7 @@ export function isArdHookCommand(command: unknown): boolean {
   return typeof command === "string" && /\bhook --agent claude-code\b/.test(command);
 }
 
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return /^[A-Za-z0-9_/.:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -64,7 +64,7 @@ export function defaultHookCommand(shared: boolean): string {
   return `${shellQuote(process.execPath)} ${shellQuote(script)} hook --agent claude-code`;
 }
 
-function readSettings(path: string): Json {
+export function readSettings(path: string): Json {
   if (!existsSync(path)) return {};
   const text = readFileSync(path, "utf8");
   if (text.trim() === "") return {};
@@ -80,28 +80,28 @@ function readSettings(path: string): Json {
   return parsed as Json;
 }
 
-function hooksOf(settings: Json): Record<string, HookGroup[]> {
+export function hooksOf(settings: Json): Record<string, HookGroup[]> {
   const hooks = settings.hooks;
   return typeof hooks === "object" && hooks !== null && !Array.isArray(hooks) ? (hooks as Record<string, HookGroup[]>) : {};
 }
 
-function groupHooks(group: HookGroup): HookEntry[] {
+export function groupHooks(group: HookGroup): HookEntry[] {
   return Array.isArray(group.hooks) ? (group.hooks as HookEntry[]) : [];
 }
 
-function containsArdHook(settings: Json): boolean {
-  return Object.values(hooksOf(settings)).some((groups) => Array.isArray(groups) && groups.some((g) => groupHooks(g).some((h) => isArdHookCommand(h.command))));
+export function containsArdHook(settings: Json, own: (command: unknown) => boolean = isArdHookCommand): boolean {
+  return Object.values(hooksOf(settings)).some((groups) => Array.isArray(groups) && groups.some((g) => groupHooks(g).some((h) => own(h.command))));
 }
 
 /** Remove ard-owned hook entries in place, leaving everything else (the user's own hooks) untouched. */
-function stripArdHooks(settings: Json): void {
+export function stripArdHooks(settings: Json, own: (command: unknown) => boolean = isArdHookCommand): void {
   const hooks = hooksOf(settings);
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) continue;
     const kept: HookGroup[] = [];
     for (const group of groups) {
       const original = groupHooks(group);
-      const remaining = original.filter((h) => !isArdHookCommand(h.command));
+      const remaining = original.filter((h) => !own(h.command));
       // Drop a group only when removing ard's entries is what emptied it; never touch groups that were already empty.
       if (remaining.length > 0 || original.length === 0) kept.push({ ...group, hooks: remaining });
     }
@@ -133,7 +133,7 @@ function addArdHooks(settings: Json, command: string): void {
   settings.hooks = hooks;
 }
 
-function ensureGitignore(root: string): InitResult["gitignore"] {
+export function ensureGitignore(root: string): InitResult["gitignore"] {
   if (!existsSync(join(root, ".git"))) return "skipped";
   const path = join(root, ".gitignore");
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";

@@ -3,12 +3,14 @@ import { SCHEMA_VERSION } from "@ard/schema";
 import { runLogin, runLogout, runWhoami, type AccountIo } from "./cloud/account.js";
 import { CloudHttpError, resolveServer, type CloudFetch } from "./cloud/client.js";
 import { runSync } from "./cloud/sync.js";
-import { handleClaudeHook } from "./hook.js";
+import { HOOK_AGENTS, handleHook, type HookAgent } from "./hook.js";
 import { runInit } from "./init.js";
+import { runInitCodex } from "./init-codex.js";
 import { readHidden, runKey } from "./key.js";
 import type { KeyStore } from "@ard/core";
 import { DEFAULT_PORT, runReview } from "./review.js";
 import { runWrapped } from "./run.js";
+import { PrError, runPrComment, runPrStatus, DEFAULT_CONTEXT } from "./pr.js";
 import { runScreenshot } from "./screenshot.js";
 
 export interface Io {
@@ -67,9 +69,11 @@ function version(): string {
 export const HELP = `ard — record what AI coding agents do, so you can review and approve it
 
 Usage:
-  ard init [--approvals | --no-approvals] [--screenshots | --no-screenshots] [--shared] [--remove] [--dir <path>]
-      Register ard's hooks for Claude Code in this project and create the local .ard/ folder.
-      Default writes .claude/settings.local.json (personal, git-ignored, absolute paths).
+  ard init [--agent claude-code | codex] [--approvals | --no-approvals] [--screenshots | --no-screenshots] [--shared] [--remove] [--dir <path>]
+      Register ard's hooks for Claude Code (default) or Codex in this project and create the local .ard/ folder.
+      Claude Code: default writes .claude/settings.local.json (personal, git-ignored, absolute paths).
+      Codex: writes this project's .codex/hooks.json (kept out of git status locally). Codex only runs hooks you have
+             reviewed: open Codex here and run /hooks to trust them (it asks again whenever they change).
       --approvals     block risky actions (force push, rm -rf ~, secrets, ...) until you approve
                       them in the review UI. Writes "approvals": true to ard.config.json.
       --no-approvals  turn that off again
@@ -90,6 +94,17 @@ Usage:
       showing it (or reads it from a pipe: pbpaste | ard key set). The key is never written to a project folder,
       never printed, and goes only to Anthropic when you ask for a summary. ANTHROPIC_API_KEY, if set, wins.
 
+  ard pr-status [--pr <number>] [--session <id>]... [--context <name>] [--dry-run]
+      Post a commit status (default name ard/review) on a pull request, from YOUR machine with the GitHub CLI:
+      success when the agent sessions behind the branch were approved in "ard review", failure if one was rejected,
+      pending if some are not reviewed. Require that status in the branch protection settings to block a merge until
+      you have reviewed. No GitHub Actions needed. Post it again after each push (a status belongs to one commit).
+      Without --session, the sessions are those that started since the branch left its base: a guess, so check the list.
+
+  ard pr-comment [--pr <number>] [--session <id>]... [--dry-run]
+      Post (or update) a pull request comment listing those sessions and their review decisions. Counts and decisions
+      only: never code or command output. --dry-run prints it and posts nothing.
+
   ard review [--port <number>]
       Open the review UI for this project: sessions, diffs, commands, and the approve/reject buttons.
       Prints a private link (127.0.0.1 only, new token each time). Default port ${DEFAULT_PORT}.
@@ -98,8 +113,8 @@ Usage:
       Run an agent (e.g. claude, codex) and record the session and the files it changed (via git).
       Works with any program; it does not need hooks.
 
-  ard hook --agent claude-code
-      Used by Claude Code, not by you: reads a hook event on stdin and appends it to .ard/events.jsonl.
+  ard hook --agent claude-code | codex
+      Used by the agent, not by you: reads a hook event on stdin and appends it to .ard/events.jsonl.
       It exits 2 (block) only when approvals are on and a risky action was denied or not approved;
       every other problem exits 0 so the recorder can never break the agent.
 
@@ -157,6 +172,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       const remove = takeFlag(args, "--remove");
       const on = takeFlag(args, "--approvals");
       const off = takeFlag(args, "--no-approvals");
+      const initAgent = takeValue(args, "--agent") ?? "claude-code";
       const shotsOn = takeFlag(args, "--screenshots");
       const shotsOff = takeFlag(args, "--no-screenshots");
       const dir = takeValue(args, "--dir") ?? io.cwd;
@@ -171,6 +187,39 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       if (shotsOn && shotsOff) {
         io.err("ard init: --screenshots and --no-screenshots cannot be used together");
         return 2;
+      }
+      if (initAgent !== "claude-code" && initAgent !== "codex") {
+        io.err(`ard init: --agent must be "claude-code" or "codex" (got ${initAgent})`);
+        return 2;
+      }
+      if (initAgent === "codex") {
+        if (shotsOn || shotsOff) {
+          io.err("ard init: --screenshots does not apply to Codex yet (pictures in Codex tool results have not been verified)");
+          return 2;
+        }
+        try {
+          const approvals = on ? true : off ? false : undefined;
+          const result = runInitCodex({ dir, shared, remove, ...(approvals === undefined ? {} : { approvals }), env: io.env });
+          for (const warning of result.warnings) io.err(`warning: ${warning}`);
+          if (result.action === "removed") io.out(`Removed ard hooks from ${result.hooksPath}. Recordings in .ard/ were kept.`);
+          else if (result.action === "nothing-to-remove") io.out(`No ard hooks found in ${result.hooksPath}.`);
+          else {
+            io.out(`ard hooks for Codex ${result.action} in ${result.hooksPath}`);
+            io.out(`  hook command: ${result.command}`);
+            io.out(`  recordings:   ${result.root}/.ard/events.jsonl`);
+            io.out(`  .gitignore:   ${result.gitignore === "added" ? "added .ard/" : result.gitignore === "already-present" ? ".ard/ already ignored" : "skipped (not a git repository)"}`);
+            io.out(`  hooks file:   ${result.exclude === "added" ? "kept out of git status (.git/info/exclude)" : result.exclude === "already-present" ? "already kept out of git status" : "not excluded (shared mode or no git directory)"}`);
+            if (result.approvals) {
+              io.out(`  approvals:    ${result.approvals.enabled ? "ON" : "off"} (${result.approvals.path}${result.approvals.changed ? "" : ", unchanged"})`);
+              if (result.approvals.enabled) io.out("  NOTE: blocking shell commands through a Codex hook was verified on Codex 0.169.0. Codex runs a command if its hook is still waiting after 10 minutes, so on Codex ard waits at most 9 minutes for your decision.");
+            }
+            io.out("Next: open Codex in this project and run /hooks to review and trust the new hooks. Until you do, Codex will not run them.");
+          }
+          return 0;
+        } catch (error) {
+          io.err(`ard init: ${(error as Error).message}`);
+          return 1;
+        }
       }
       try {
         const approvals = on ? true : off ? false : undefined;
@@ -208,11 +257,11 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       try {
         const args = [...rest];
         const agent = takeValue(args, "--agent");
-        if (agent !== "claude-code") {
-          io.err(`ard hook: --agent must be "claude-code" (got ${agent ?? "nothing"}). This command is meant to be called by Claude Code.`);
+        if (!agent || !(HOOK_AGENTS as readonly string[]).includes(agent)) {
+          io.err(`ard hook: --agent must be "claude-code" or "codex" (got ${agent ?? "nothing"}). This command is meant to be called by the agent.`);
           return 0;
         }
-        const result = await handleClaudeHook(await io.readStdin(), io.env, io.cwd);
+        const result = await handleHook(agent as HookAgent, await io.readStdin(), io.env, io.cwd);
         if (result.message) io.err(result.message);
         return result.exitCode;
       } catch (error) {
@@ -237,6 +286,27 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         return await runReview({ cwd: io.cwd, env: io.env, port, log: io.err });
       } catch (error) {
         io.err(`ard review: ${(error as Error).message}`);
+        return 1;
+      }
+    }
+
+    case "pr-status":
+    case "pr-comment": {
+      const args = [...rest];
+      const dryRun = takeFlag(args, "--dry-run");
+      const pr = takeValue(args, "--pr");
+      const context = (command === "pr-status" ? takeValue(args, "--context") : undefined) ?? DEFAULT_CONTEXT;
+      const sessions: string[] = [];
+      for (let id = takeValue(args, "--session"); id !== undefined; id = takeValue(args, "--session")) sessions.push(id);
+      if (args.length > 0) {
+        io.err(`ard ${command}: unknown argument: ${args.join(" ")}`);
+        return 2;
+      }
+      try {
+        const options = { cwd: io.cwd, env: io.env, ...(pr === undefined ? {} : { pr }), ...(sessions.length > 0 ? { sessions } : {}), dryRun, context, out: io.out };
+        return command === "pr-status" ? runPrStatus(options) : runPrComment(options);
+      } catch (error) {
+        io.err(`ard ${command}: ${error instanceof PrError || error instanceof Error ? error.message : String(error)}`);
         return 1;
       }
     }

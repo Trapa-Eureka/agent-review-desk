@@ -1,0 +1,15 @@
+{
+  "session_id": "01a1dfe6-8864-7cb1-b356-1a8f825a6140",
+  "turn_id": "01a1dfe8-8a2b-79a3-b18e-2e75a998123e",
+  "transcript_path": "/home/user/.codex/sessions/2026/11/15/rollout.jsonl",
+  "cwd": "/proj",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-6-luna",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -sI https://example.com"
+  },
+  "tool_response": "HTTP/2 200 \r\ndate: Sun, 15 Nov 2026 15:52:10 GMT\r\ncontent-type: text/html; charset=utf-8\r\nserver: cloudflare\r\nlast-modified: Thu, 12 Nov 2026 21:56:22 GMT\r\nallow: GET, HEAD\r\naccept-ranges: bytes\r\nage: 5\r\ncf-cache-status: HIT\r\ncf-ray: a5af6be7dd6d0671-HKG\r\nalt-svc: h3=\":443\"; ma=86400\r\n\r\n",
+  "tool_use_id": "exec-38b1f18f-3b5f-45ef-8bf8-0994c25385b9"
+}

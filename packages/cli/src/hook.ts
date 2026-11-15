@@ -1,4 +1,5 @@
 import type { ArdEvent, FileChangeEvent, ScreenshotEvent } from "@ard/schema";
+import { CODEX_MAX_WAIT_SECONDS, eventsFromCodexPayload } from "./codex.js";
 import {
   LIMITS,
   appendEvent,
@@ -213,6 +214,10 @@ function screenshotEventsFor(images: FoundImage[], post: ArdEvent, root: string,
   return out;
 }
 
+/** The agents ard has a hook adapter for. */
+export type HookAgent = "claude-code" | "codex";
+export const HOOK_AGENTS: readonly HookAgent[] = ["claude-code", "codex"];
+
 export interface Recorded {
   payload: ClaudeHookPayload;
   root: string;
@@ -224,16 +229,17 @@ export interface Recorded {
  * nothing to record. Throws on I/O failure; the caller turns that into a warning, because a
  * recorder must never break the agent it is observing.
  */
-export function recordPayload(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd()): Recorded | null {
+export function recordPayload(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd(), agent: HookAgent = "claude-code"): Recorded | null {
   const text = stdinText.trim();
   if (text === "") return null;
   const parsed: unknown = JSON.parse(text);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
   const payload = parsed as ClaudeHookPayload;
 
-  const projectDir = str(env.CLAUDE_PROJECT_DIR);
+  // Claude Code names the project in CLAUDE_PROJECT_DIR; Codex gives no such variable, only the working directory.
+  const projectDir = agent === "claude-code" ? str(env.CLAUDE_PROJECT_DIR) : undefined;
   const root = projectDir ?? findProjectRoot(str(payload.cwd) ?? fallbackCwd);
-  const events = eventsFromClaudePayload(payload, root, env);
+  const events = agent === "codex" ? eventsFromCodexPayload(payload, root, env) : eventsFromClaudePayload(payload, root, env);
   if (events.length === 0) return null;
 
   if (payload.hook_event_name === "PostToolUse") {
@@ -280,12 +286,19 @@ const blocked = (message: string): HookResult => ({ exitCode: 2, message: `[ard]
  *    letting a flagged action through because our own plumbing broke would defeat the point.
  */
 export async function handleClaudeHook(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd(), deps: HookDeps = {}): Promise<HookResult> {
-  const recorded = recordPayload(stdinText, env, fallbackCwd);
+  return handleHook("claude-code", stdinText, env, fallbackCwd, deps);
+}
+
+/** The same hook for any supported agent: record, then (for a PreToolUse call) apply the policy and pre-approval. */
+export async function handleHook(agent: HookAgent, stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd(), deps: HookDeps = {}): Promise<HookResult> {
+  const recorded = recordPayload(stdinText, env, fallbackCwd, agent);
   if (!recorded || recorded.payload.hook_event_name !== "PreToolUse") return { exitCode: 0 };
   const { payload, root, events } = recorded;
 
   const config = loadConfig(root);
   if (!config.approvals) return { exitCode: 0, ...(config.warnings.length > 0 ? { message: config.warnings.join(" ") } : {}) };
+  // Codex runs the command if the hook outlives its timeout (verified), so for Codex the wait is capped below that timeout.
+  const waitSeconds = agent === "codex" ? Math.min(config.timeoutSeconds, CODEX_MAX_WAIT_SECONDS) : config.timeoutSeconds;
 
   const toolInput = rec(payload.tool_input);
   let verdict;
@@ -333,7 +346,7 @@ export async function handleClaudeHook(stdinText: string, env: NodeJS.ProcessEnv
       summary: summarizeCall(call),
       input: sanitize(toolInput),
       rules: verdict.matches.map((m) => ({ id: m.id, description: m.description })),
-      timeoutMs: config.timeoutSeconds * 1000,
+      timeoutMs: waitSeconds * 1000,
     });
 
     // If Claude Code interrupts us while we wait, retire the request so it cannot be approved later for nothing.
@@ -359,8 +372,8 @@ export async function handleClaudeHook(stdinText: string, env: NodeJS.ProcessEnv
     if (outcome.status === "rejected") {
       return blocked(`A reviewer (${outcome.decidedBy ?? "unknown"}) rejected this action${outcome.note ? `: ${outcome.note}` : "."}`);
     }
-    recordApprovalEvent(repo, eventsPath, { sessionId, cwd, decision: "rejected", decidedBy: "timeout", targetEventId, requestId: request.id, ruleIds, note: `No decision within ${config.timeoutSeconds}s.` });
-    return blocked(`Nobody approved this action within ${config.timeoutSeconds}s (${why}). Start the review UI with "ard review" and try again.`);
+    recordApprovalEvent(repo, eventsPath, { sessionId, cwd, decision: "rejected", decidedBy: "timeout", targetEventId, requestId: request.id, ruleIds, note: `No decision within ${waitSeconds}s.` });
+    return blocked(`Nobody approved this action within ${waitSeconds}s (${why}). Start the review UI with "ard review" and try again.`);
   } catch (error) {
     return blocked(`approval failed (${(error as Error).message}); blocking this risky action (${why}).`);
   } finally {

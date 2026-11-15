@@ -1,0 +1,15 @@
+{
+  "session_id": "01a1dfe6-8864-7cb1-b356-1a8f825a6140",
+  "turn_id": "01a1dfe6-cf1e-75c3-b246-08df25f9eaa5",
+  "transcript_path": "/home/user/.codex/sessions/2026/11/15/rollout.jsonl",
+  "cwd": "/proj",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-6-luna",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo hello"
+  },
+  "tool_response": "hello\n",
+  "tool_use_id": "exec-c56ba5b8-4d4c-4f46-bca0-6117c7bc4a97"
+}
