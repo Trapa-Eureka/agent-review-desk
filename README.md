@@ -2,10 +2,9 @@
 
 A workspace that records what AI coding agents (Claude Code, Codex) do on your machine, so a human can review the diffs and commands and **approve or reject** them.
 
-> **Status: early development (Phase 3 complete, not yet run live).**
+> **Status: early development.**
 > The free, local tier works end to end: record Claude Code sessions (`ard init`) or any agent (`ard run`), review them in a local web UI (`ard review`), approve or reject whole sessions, and have risky actions wait for your approval before they run.
-> The paid **Team** tier is built and tested too: `ard login`, `ard sync` to a team workspace, roles, single sign-on, and monthly billing through **Paddle** and **Dodo Payments**. What has not been done is a *live* payment or a *live* sign-in with real provider accounts: see [Running Agent Review Desk Cloud](docs/cloud-selfhosting.md#7-first-live-test-what-to-check-yourself). Everything marked _(planned)_ below describes the intended behavior.
-> Paid plans are still only planned: nothing is for sale yet.
+> Paid plans are still in planning.
 
 ## Overview
 
@@ -40,13 +39,7 @@ It is built for development teams and agencies that use AI agents and need an au
 | `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (not yet tried on a real pull request) |
 | AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tested against a stand-in server, not the real API) |
 | Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
-| `ard login` / `logout` / `whoami`: sign in to a cloud workspace with a short code confirmed in the browser | Done |
-| `ard sync`: upload recorded sessions to a team workspace (explicit consent first, resumable, server redacts again) | Done |
-| Team workspace (`apps/cloud`): organizations, shared sessions, timeline and diff, team review | Done |
-| Roles: owner / admin / reviewer / member, invitations, audit log | Done |
-| Single sign-on per organization (OpenID Connect; SAML not supported) | Done |
-| Monthly subscriptions through **Paddle** and **Dodo Payments** (signed webhooks, access follows the subscription) | Done, not yet run live |
-| Retention periods, per-seat pricing, centrally managed team policies, Postgres for multi-server hosting | Planned |
+| Paid plans: shared team workspace, cloud sync, roles, single sign-on | Planned |
 
 ### How it works
 
@@ -264,32 +257,6 @@ ard --help
 
 The review UI is an ordinary Next.js app in `apps/web`; run it through `ard review` so it gets its project folder and access token.
 
-### Team workspace (the paid Team tier)
-
-Run your own cloud server (see [docs/cloud-selfhosting.md](docs/cloud-selfhosting.md)), then from any project:
-
-```bash
-export ARD_CLOUD_URL=https://cloud.example.com   # or pass --server on each command
-ard login                # prints a link and a short code; you confirm it in the browser
-ard whoami               # who you are, your organizations and their plan
-ard sync --dry-run       # see exactly what would be uploaded (nothing is sent)
-ard sync --org acme --yes   # upload recorded sessions; --yes is only needed the first time per organization
-ard logout               # revokes this machine's token on the server and forgets it
-```
-
-- **Nothing is uploaded without your say-so.** The recorded log holds command output and file diffs, so the first `ard sync` to an organization refuses to run until you pass `--yes`; `--dry-run` shows the summary first. Everything was already redacted when recorded, and the server redacts again.
-- **Resumable.** Progress is saved after each batch; an interrupted sync repeats nothing and loses nothing. Uploading the same event twice is harmless.
-- **The token** is stored in `~/.config/ard/credentials.json` (owner-only; move it with `ARD_CONFIG_DIR`). It is only ever sent over https (plain http only for `localhost`). `ard logout` revokes it on the server.
-- **Free vs Team:** `ard login` works on any plan, but `ard sync` is refused (with a message that says why) for an organization without an active subscription. Everything you recorded stays on your machine either way.
-- **In the browser**, owners create the organization, invite people, pay, and configure single sign-on; reviewers approve or reject synced sessions with their e-mail on the record.
-
-| Role | Read sessions | Sync | Review | Manage members, audit log | Billing & SSO |
-|---|---|---|---|---|---|
-| member | yes (sees the member list, read-only) | yes | no | no | no |
-| reviewer | yes | yes | **yes** | no | no |
-| admin | yes | yes | yes | **yes** | no |
-| owner | yes | yes | yes | yes | **yes** |
-
 ## Event log
 
 `.ard/events.jsonl` holds one JSON object per line (schema version 1, defined in `packages/schema`). Event types: `session_start`, `session_end`, `tool_use` (before/after each tool call), `command`, `file_change`, `approval` (a decision: written by the review UI for your clicks, and by the hook for policy denials and timeouts), and `screenshot` (a pointer to a picture kept in `.ard/screenshots/`).
@@ -305,7 +272,7 @@ ard screenshot login.png --caption "Login page after the fix"   # attach a pictu
 ard init --screenshots                                          # also keep pictures that appear in tool results
 ```
 
-- **A picture cannot be redacted.** It may show anything that was on the screen: tokens, personal data, other windows. That is why keeping pictures from tool results is **opt-in** (`"screenshots": true` in `ard.config.json`), and why screenshots stay on your machine: `ard sync` skips them and the team workspace refuses them.
+- **A picture cannot be redacted.** It may show anything that was on the screen: tokens, personal data, other windows. That is why keeping pictures from tool results is **opt-in** (`"screenshots": true` in `ard.config.json`), and why screenshots stay on your machine.
 - Pictures are stored in `.ard/screenshots/<sha256>` (owner-only; the same image is stored once). The log only holds a small `screenshot` event that points at the file.
 - **Only PNG, JPEG, GIF and WebP are accepted**, judged from the file's first bytes, up to 8 MiB. SVG and everything else is refused (SVG can carry script). The review UI serves a picture only by its hash, never by a path.
 - **Whether a hook receives the picture at all depends on the agent.** Claude Code's documentation does not say whether `PostToolUse` carries image data for browser tools, so automatic capture is best effort and has not been verified against a real browser tool. Whatever arrives, base64 image data is never written into the text log. `ard screenshot` always works.
@@ -320,41 +287,10 @@ ard init --screenshots                                          # also keep pict
 - The review UI shows what was recorded, which is redacted on a best-effort basis. It runs on your machine only (see [Data and privacy](#data-and-privacy)).
 - Screenshots from tool results are best effort (see [Screenshots](#screenshots)); pictures are never redacted, only kept local and opt-in.
 - macOS and Linux only; Windows is untested. Node's built-in SQLite is still marked experimental by Node; ard hides its startup warning.
-- **Cloud:** SQLite and a single server instance (no Postgres yet), no SAML, no outgoing e-mail (invitation links are copied by hand), one flat plan per organization (no per-seat pricing), no automatic data retention or deletion yet. Pre-approval of risky actions stays local: the cloud workspace reviews *finished* sessions, it does not gate a running agent. See [docs/cloud-selfhosting.md](docs/cloud-selfhosting.md#9-known-limits).
-- **Cloud, not yet verified live:** a real purchase with Paddle or Dodo Payments, and a sign-in with a real identity provider. The code paths are tested, including end to end with signed webhooks and real OIDC redirects against a local provider.
 
-## Free vs. paid
+## Paid plans (planned)
 
-The price is whatever you set in your payment provider's dashboard. The planning hypothesis is roughly **$19–99 per month per team** and **may change before launch**; the code only needs the price id.
-
-| | Free (local) | Team (cloud) |
-|---|---|---|
-| Price | $0 | monthly subscription per organization |
-| CLI recorder and wrapper | Yes | Yes |
-| Local JSONL + SQLite storage | Yes | Yes |
-| Local review UI (single user) | Yes | Yes |
-| Diff and command review | Yes | Yes |
-| Approve / reject (local) | Yes | Yes |
-| Pre-approval of risky actions, default policy pack, per-rule overrides | Yes | Yes |
-| Cloud sync and shared team workspace | No | Yes |
-| Roles (owner / admin / reviewer / member) and team review | No | Yes |
-| Invitations and audit log | No | Yes |
-| Single sign-on (OpenID Connect) | No | Yes |
-| Retention periods, centrally managed team policies, multi-agent view | No | Planned |
-
-The free/paid boundary follows **server-side features**: everything that runs on your machine is free; everything that needs a server (sync, sharing, roles, SSO) is paid. When a subscription lapses, uploads and reviews stop but **everything already synced stays readable**.
-
-## Payment
-
-- **Billing model: monthly subscription** per organization. It is **not** a one-time purchase, because the paid features need servers and storage that cost money every month.
-- **Two providers are built in: Paddle and Dodo Payments.** Both are merchants of record (they handle international sales tax and invoicing). Configure one or both; owners choose on the Billing page. Both default to their sandbox / test mode; going live is a deliberate switch.
-- **Payment happens on the web, never inside the CLI.** The CLI only stores a token and reads the plan.
-- **We never see or store card details.** The provider's hosted checkout does.
-- **How a payment becomes access:** the server starts the checkout with a one-time value; the provider's signed webhook brings it back; only that value ties the payment to an organization. Webhooks are verified against the exact bytes received, are idempotent, and tolerate out-of-order delivery. A failed payment keeps access for 7 days; a cancelled subscription keeps it until the paid period ends.
-- Cancelling the subscription never deletes your local data, and nothing already synced is withdrawn.
-- **Tested** against each provider's documented webhook format (including cross-checks with Paddle's and Standard Webhooks' own libraries) and in an end-to-end run with signed webhooks. **Not yet done:** a live purchase with your accounts. The checklist is in [docs/cloud-selfhosting.md](docs/cloud-selfhosting.md#7-first-live-test-what-to-check-yourself).
-
-Whether you need to register as a business, charge VAT or report income depends on where you live and how much you sell; the payment providers do not decide that for you. Ask a tax adviser.
+Everything that runs on your machine is free. Paid plans for team features that need a server (a shared workspace, roles, single sign-on) are in planning. Nothing is for sale yet, and prices and details are not decided.
 
 ## Safety hook
 
@@ -395,15 +331,15 @@ agent-review-desk/
 ├── packages/
 │   ├── schema/   # JSONL event schema and validation (@ard/schema)
 │   ├── core/     # SQLite repository, policy engine, approvals, config, redaction (@ard/core)
-│   ├── cli/      # the `ard` CLI: init, hook, run, review, login, logout, whoami, sync (@ard/cli)
-│   ├── billing/  # Paddle and Dodo Payments: checkout, portal, signed webhooks, entitlement (@ard/billing)
-│   ├── cloud/    # accounts, organizations, roles, SSO, synced workspaces, billing service (@ard/cloud)
+│   ├── cli/      # the `ard` CLI (@ard/cli)
+│   ├── billing/  # unreleased groundwork for the planned paid plans (@ard/billing)
+│   ├── cloud/    # unreleased groundwork for the planned paid plans (@ard/cloud)
 │   ├── summary/  # optional AI session summary with your own key: digest, prompt, request (@ard/summary)
-│   └── ui/       # review components shared by the local and cloud UIs (@ard/ui)
+│   └── ui/       # review components shared by the local UI and the planned team workspace (@ard/ui)
 ├── apps/
 │   ├── web/      # local Next.js review UI (@ard/web), started by `ard review`
-│   └── cloud/    # team workspace server (@ard/cloud-web), see docs/cloud-selfhosting.md
-├── docs/         # self-hosting guide for the cloud server
+│   └── cloud/    # unreleased groundwork for the planned paid plans (@ard/cloud-web)
+├── docs/unreleased/  # notes for the planned paid plans (not available)
 ├── .claude/
 │   ├── settings.json
 │   └── hooks/    # dev-time blocking hook and its tests
@@ -416,7 +352,7 @@ agent-review-desk/
 - [x] **Phase 0** — monorepo, `CLAUDE.md`, safety hook
 - [x] **Phase 1** — event schema, `ard init`, `ard hook`, `ard run`
 - [x] **Phase 2** — SQLite storage layer, review UI, approve/reject, pre-approval of risky actions
-- [x] **Phase 3** — `ard login`, cloud sync, billing (Paddle + Dodo Payments), roles, SSO. Built and tested; first live purchase / sign-in still to do
+- [ ] **Phase 3** — paid plans: cloud sync, shared team workspace, roles, single sign-on, billing (planned)
 - [ ] **Phase 4** — optional: ~~bring-your-own-key AI summaries~~ (done), ~~Codex hook adapter~~ (done), ~~PR gate and comment without Actions~~ (done: `ard pr-status`, `ard pr-comment`), multi-agent view
 
 ## Contributing
@@ -425,4 +361,4 @@ The project is at an early stage. Please open an issue to discuss a change befor
 
 ## License
 
-[MIT](LICENSE). Note that the license applies to all code in this repository, including the cloud server: anyone may self-host it, including the Team features.
+[MIT](LICENSE).

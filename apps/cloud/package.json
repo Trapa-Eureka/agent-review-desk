@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 -p 4780",
+    "dev": "node scripts/guard.mjs && next dev -H 127.0.0.1 -p 4780",
     "build": "next build",
-    "start": "next start -H 127.0.0.1 -p 4780",
+    "start": "node scripts/guard.mjs && next start -H 127.0.0.1 -p 4780",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

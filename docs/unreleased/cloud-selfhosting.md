@@ -1,5 +1,7 @@
 # Running Agent Review Desk Cloud
 
+> **Unreleased and blocked.** The paid team features are still in planning. The server and the commands that use it refuse to run unless the developer switch `ARD_UNRELEASED_CLOUD=1` is set. This document is kept for when they are released: nothing here describes something you can use today.
+
 한국어: [cloud-selfhosting.ko.md](cloud-selfhosting.ko.md)
 
 The cloud server is the paid **Team** tier: an account system, team workspaces that hold synced sessions, roles,

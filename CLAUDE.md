@@ -7,12 +7,12 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - `packages/schema` — JSONL event schema and validation (`@ard/schema`)
 - `packages/core` — SQLite repository, policy engine, approvals, config, redaction, JSONL append (`@ard/core`). Shared by the CLI and the web app.
 - `packages/cli` — the `ard` CLI: init / hook / run / review / login / logout / whoami / sync (`@ard/cli`)
-- `packages/billing` — Paddle and Dodo providers, webhook verification, entitlement (`@ard/billing`)
-- `packages/cloud` — accounts, orgs, roles, SSO, per-org workspaces, billing service (`@ard/cloud`)
+- `packages/billing` — Paddle and Dodo providers, webhook verification, entitlement (`@ard/billing`). UNRELEASED
+- `packages/cloud` — accounts, orgs, roles, SSO, per-org workspaces, billing service (`@ard/cloud`). UNRELEASED
 - `packages/summary` — optional BYOK AI session summary (`@ard/summary`; the only package that talks to Anthropic)
 - `packages/ui` — review components shared by both UIs (`@ard/ui`, source-shipped via `transpilePackages`)
 - `apps/web` — Next.js review UI (`@ard/web`), started by `ard review`, never run bare
-- `apps/cloud` — Next.js team workspace (`@ard/cloud-web`); self-host guide in `docs/cloud-selfhosting.md`
+- `apps/cloud` — Next.js team workspace (`@ard/cloud-web`). UNRELEASED and BLOCKED; guide in `docs/unreleased/cloud-selfhosting.md`
 - `.claude/hooks` — dev-time blocking hook for this repo (not product code)
 
 ## Commands
@@ -31,6 +31,7 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - Never send a user's API key to our servers. If one is needed, use the OS keychain or environment variables (BYOK).
 
 ## Invariants (tested; do not break)
+- **Paid/team features are unreleased and BLOCKED.** `ard login|logout|whoami|sync` and the `apps/cloud` server (middleware 503 for every route, a guard on `pnpm start/dev`, and `getCloud()`) refuse to run unless `ARD_UNRELEASED_CLOUD=1`, which exists for development and `pnpm test:e2e` only. Do not mention them in the README or `ard --help`, and do not set the switch anywhere by default. The e2e proves the block (503 on every path, commands refuse, help is clean).
 - `ard hook` exits 2 (which makes Claude Code BLOCK the call) **only** when approvals are on and a flagged action was denied, rejected, timed out, or could not be put to a human. Every other problem exits 0: a recorder must never break the agent.
 - Fail-open for recording, config and policy bugs; fail-closed for a flagged action whose approval store is unreachable. A timeout is a denial, never an approval.
 - The PreToolUse hook timeout in settings (`PRE_TOOL_TIMEOUT_SECONDS`) must exceed the longest allowed wait (`MAX_TIMEOUT_SECONDS`): if Claude Code killed the hook first it would treat that as a non-blocking error and the risky call would run unapproved.

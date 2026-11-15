@@ -8,6 +8,7 @@ const KEY = Symbol.for("ard.cloud.instance");
  * to the operator instead of a blank error page.
  */
 export function getCloud(): Cloud {
+  if (process.env.ARD_UNRELEASED_CLOUD !== "1") throw new Error("The team workspace server is not available yet.");
   const holder = globalThis as unknown as Record<symbol, Cloud | undefined>;
   let cloud = holder[KEY];
   if (!cloud) {

@@ -13,6 +13,13 @@ import { runWrapped } from "./run.js";
 import { PrError, runPrComment, runPrStatus, DEFAULT_CONTEXT } from "./pr.js";
 import { runScreenshot } from "./screenshot.js";
 
+/**
+ * The paid team features (login, logout, whoami, sync, and the apps/cloud server) are unreleased and BLOCKED: they refuse
+ * to run unless this variable is "1". It exists for development and for the end-to-end test, is deliberately left out of
+ * the README and `--help`, and nothing in a normal install sets it.
+ */
+export const UNRELEASED_CLOUD_ENV = "ARD_UNRELEASED_CLOUD";
+
 export interface Io {
   out: (text: string) => void;
   err: (text: string) => void;
@@ -118,21 +125,8 @@ Usage:
       It exits 2 (block) only when approvals are on and a risky action was denied or not approved;
       every other problem exits 0 so the recorder can never break the agent.
 
-Team workspace (the paid Team plan; point ARD_CLOUD_URL at your Agent Review Desk Cloud, or pass --server):
-  ard login [--server <url>]
-      Sign in. Shows a short code and a link; you confirm in the browser (SSO and 2FA work as usual).
-  ard logout [--server <url>]
-      Revoke this machine's token and forget it.
-  ard whoami [--server <url>]
-      Who you are signed in as, your organizations and their plan.
-  ard sync [--org <slug>] [--dry-run] [--yes] [--server <url>]
-      Upload what was recorded since the last sync to your team's workspace. The first upload to an
-      organization needs --yes: it sends command output and file diffs to another computer.
-      --dry-run shows what would be sent and sends nothing.
-
 Recordings are written to .ard/events.jsonl and indexed in .ard/data.db (set ARD_DIR to use another folder).
 Project settings live in ard.config.json (committed): approvals, timeoutSeconds, per-rule overrides.
-Your login token is stored in ~/.config/ard/credentials.json (owner-only; set ARD_CONFIG_DIR to move it).
 `;
 
 function takeFlag(args: string[], flag: string): boolean {
@@ -362,6 +356,10 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
     case "logout":
     case "whoami":
     case "sync": {
+      if (io.env[UNRELEASED_CLOUD_ENV] !== "1") {
+        io.err(`ard ${command}: this is not available yet. Paid plans are still in planning.`);
+        return 1;
+      }
       const args = [...rest];
       const serverFlag = takeValue(args, "--server");
       const org = command === "sync" ? takeValue(args, "--org") : undefined;

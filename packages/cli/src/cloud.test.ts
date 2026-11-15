@@ -9,7 +9,7 @@ import { runLogin, runLogout, runWhoami, type AccountIo } from "./cloud/account.
 import { CloudHttpError, cloudRequest, resolveServer, type CloudFetch } from "./cloud/client.js";
 import { configDir, credentialsPath, getCredential, removeCredential, saveCredential } from "./cloud/credentials.js";
 import { BATCH_MAX_EVENTS, batches, readPending, runSync } from "./cloud/sync.js";
-import { main, type Io } from "./cli.js";
+import { HELP, main, type Io } from "./cli.js";
 
 const SERVER = "https://cloud.example.com";
 
@@ -526,7 +526,8 @@ function cliIo(env: NodeJS.ProcessEnv, cwd: string, fetch: CloudFetch): { io: Io
 test("`ard sync` and friends through main(): flags are parsed, errors become messages and exit code 1", async () => {
   const s = sandbox();
   try {
-    const env = { ...s.env, ARD_CLOUD_URL: SERVER };
+    const unlocked = { ...s.env, ARD_UNRELEASED_CLOUD: "1" }; // the team commands are blocked without this developer switch
+    const env = { ...unlocked, ARD_CLOUD_URL: SERVER };
     signedIn(env);
     record(s.project.dir, env, start("s1"));
     const cloud = fakeCloud({ "POST /api/v1/orgs/acme/events": accepting, "GET /api/v1/me": () => ({ json: ME }) });
@@ -536,11 +537,11 @@ test("`ard sync` and friends through main(): flags are parsed, errors become mes
     const who = cliIo(env, s.project.dir, cloud.fetch);
     assert.equal(await main(["whoami"], who.io), 0);
 
-    const noServer = cliIo(s.env, s.project.dir, cloud.fetch);
+    const noServer = cliIo(unlocked, s.project.dir, cloud.fetch);
     assert.equal(await main(["sync"], noServer.io), 1);
     assert.match(noServer.err.join(""), /No cloud server given/);
 
-    const insecure = cliIo(s.env, s.project.dir, cloud.fetch);
+    const insecure = cliIo(unlocked, s.project.dir, cloud.fetch);
     assert.equal(await main(["login", "--server", "http://evil.example.com"], insecure.io), 1);
     assert.match(insecure.err.join(""), /must use https/);
 
@@ -550,12 +551,6 @@ test("`ard sync` and friends through main(): flags are parsed, errors become mes
   } finally {
     s.cleanup();
   }
-});
-
-test("help documents the cloud commands", async () => {
-  const out: string[] = [];
-  await main(["--help"], { out: (t) => out.push(t), err: () => {}, readStdin: async () => "", cwd: process.cwd(), env: cleanEnv() });
-  for (const word of ["ard login", "ard logout", "ard whoami", "ard sync", "--dry-run", "--yes", "ARD_CLOUD_URL", "credentials.json"]) assert.ok(out.join("").includes(word), word);
 });
 
 test("screenshots are never uploaded: they are counted, skipped, and the user is told they stay on this machine", async () => {
@@ -588,5 +583,34 @@ test("screenshots are never uploaded: they are counted, skipped, and the user is
     }
   } finally {
     s.cleanup();
+  }
+});
+
+test("the team commands are BLOCKED without the developer switch: they refuse, send nothing, and touch no files", async () => {
+  const s = sandbox();
+  try {
+    const env = { ...s.env, ARD_CLOUD_URL: SERVER }; // a server is configured and a login is saved: still blocked
+    signedIn(env);
+    record(s.project.dir, env, start("s1"));
+    const cloud = fakeCloud({ "POST /api/v1/orgs/acme/events": accepting, "GET /api/v1/me": () => ({ json: ME }) });
+    const before = JSON.stringify(existsSync(join(s.project.dir, ".ard", "cloud-sync.json")));
+    for (const argv of [["login"], ["logout"], ["whoami"], ["sync", "--org", "acme", "--yes"], ["sync", "--dry-run"]]) {
+      for (const value of [undefined, "", "0", "true", "yes"]) {
+        const h = cliIo({ ...env, ...(value === undefined ? {} : { ARD_UNRELEASED_CLOUD: value }) }, s.project.dir, cloud.fetch);
+        assert.equal(await main(argv, h.io), 1, `${argv.join(" ")} with switch=${JSON.stringify(value)}`);
+        assert.match(h.err.join(""), /not available yet\. Paid plans are still in planning/);
+        assert.equal(h.out.length, 0);
+      }
+    }
+    assert.equal(cloud.calls.length, 0, "nothing went out");
+    assert.equal(JSON.stringify(existsSync(join(s.project.dir, ".ard", "cloud-sync.json"))), before, "no sync state was written");
+  } finally {
+    s.cleanup();
+  }
+});
+
+test("the help text does not advertise the team commands", () => {
+  for (const word of ["ard login", "ard logout", "ard whoami", "ard sync", "Team workspace", "paid", "credentials.json", "ARD_CLOUD_URL"]) {
+    assert.equal(HELP.includes(word), false, word);
   }
 });

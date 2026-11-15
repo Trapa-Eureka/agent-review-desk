@@ -65,6 +65,7 @@ const serverEnv = {
   ...process.env,
   ...blanked,
   NODE_ENV: "production",
+  ARD_UNRELEASED_CLOUD: "1", // the team features are blocked unless this is set
   ARD_CLOUD_SECRET: "e2e-secret-" + "x".repeat(40),
   ARD_CLOUD_BASE_URL: BASE,
   ARD_CLOUD_DATA_DIR: dataDir,
@@ -112,7 +113,7 @@ const stripComments = (s) => s.replace(/<!-- -->/g, "");
 const flash = (loc, kind) => decodeURIComponent((new URL(loc, BASE).searchParams.get(kind) ?? "").replace(/\+/g, " "));
 
 function ard(args, { cwd = project, env = {} } = {}) {
-  const child = spawn(process.execPath, [`${ROOT}/packages/cli/dist/index.js`, ...args], { cwd, env: { ...process.env, ARD_CLOUD_URL: BASE, ARD_CONFIG_DIR: configDir, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [`${ROOT}/packages/cli/dist/index.js`, ...args], { cwd, env: { ...process.env, ARD_UNRELEASED_CLOUD: "1", ARD_CLOUD_URL: BASE, ARD_CONFIG_DIR: configDir, ...env }, stdio: ["ignore", "pipe", "pipe"] });
   const promise = new Promise((resolve) => {
     let out = ""; let err = "";
     child.stdout.on("data", (d) => (out += d));
@@ -129,6 +130,32 @@ try {
   const health = await call("GET", "/api/health");
   check("server is up and healthy", health.status === 200 && health.json?.ok === true, serverLog.slice(-300));
   const control = new ControlStore(openDb(join(dataDir, "control.db"), CLOUD_MIGRATIONS));
+
+  section("the team features are BLOCKED without the developer switch");
+  const BLOCKED_PORT = PORT + 2;
+  const blockedEnv = { ...serverEnv };
+  delete blockedEnv.ARD_UNRELEASED_CLOUD;
+  const blocked = spawn(process.execPath, [`${ROOT}/apps/cloud/node_modules/next/dist/bin/next`, "start", "-H", "127.0.0.1", "-p", String(BLOCKED_PORT)], { cwd: `${ROOT}/apps/cloud`, env: blockedEnv, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    let up = false;
+    for (let i = 0; i < 60 && !up; i++) {
+      try { up = (await fetch(`http://127.0.0.1:${BLOCKED_PORT}/`)).status > 0; } catch { await new Promise((r) => setTimeout(r, 500)); }
+    }
+    const probe = async (method, path, body) => fetch(`http://127.0.0.1:${BLOCKED_PORT}${path}`, { method, ...(body ? { body, headers: { "content-type": "application/json" } } : {}) });
+    for (const [method, path, body] of [["GET", "/"], ["GET", "/api/health"], ["GET", "/o/e2e"], ["POST", "/api/webhooks/paddle", "{}"], ["POST", "/api/webhooks/dodo", "{}"], ["POST", "/api/v1/device/code", "{}"], ["POST", "/api/auth/dev", "{}"]]) {
+      const res = await probe(method, path, body);
+      const text = await res.text();
+      check(`${method} ${path} is refused with 503 and says it is not available`, res.status === 503 && /not available/i.test(text), `${res.status} ${text.slice(0, 80)}`);
+    }
+  } finally {
+    blocked.kill("SIGTERM");
+  }
+  for (const command of [["login"], ["whoami"], ["logout"], ["sync", "--dry-run"]]) {
+    const result = await ard(command, { env: { ARD_UNRELEASED_CLOUD: "" } });
+    check(`ard ${command[0]} refuses to run without the switch`, result.code === 1 && /not available yet/.test(result.err), `${result.code} ${result.err.slice(0, 80)}`);
+  }
+  const helpOut = (await ard(["--help"], { env: { ARD_UNRELEASED_CLOUD: "" } })).out;
+  check("the help text does not mention the team commands", !/ard login|ard sync|ard whoami|ard logout|Team workspace|credentials\.json/.test(helpOut), "");
 
   section("sign in (dev login) and create an organization");
   const owner = new Jar();
