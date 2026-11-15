@@ -6,6 +6,8 @@ A workspace that records what AI coding agents (Claude Code, Codex) do on your m
 > The free, local tier works end to end: record Claude Code sessions (`ard init`) or any agent (`ard run`), review them in a local web UI (`ard review`), approve or reject whole sessions, and have risky actions wait for your approval before they run.
 > Paid plans are still in planning.
 
+**Jump to:** [Quick start](#quick-start) · [**Usage**](#usage) · [Installation](#installation)
+
 ## Overview
 
 AI agents change files, run shell commands and drive browsers. The record of who approved what usually ends up scattered across terminal scrollback and chat logs.
@@ -89,9 +91,9 @@ You need the build from [Installation](#installation) and the `ard` alias. Then,
 3. **Review:** run `ard review` in the same folder, open the link it prints, open a session, read the timeline, and press **Approve session** or **Reject session**.
 4. **Undo any time:** `ard init --remove` (or `ard init --agent codex --remove`). Your recordings stay.
 
-Optional extras, each explained below: `ard init --approvals` pauses risky commands until you approve them in the UI; `ard key set` plus **Summarize with AI** gives a one-paragraph summary of a long session; `ard screenshot <file>` attaches a picture; `ard pr-status` and `ard pr-comment` show your review on a pull request (and can block merging until you have reviewed) without GitHub Actions.
+Every command is explained in [Usage](#usage). Optional extras, each explained there: `ard init --approvals` pauses risky commands until you approve them in the UI; `ard key set` plus **Summarize with AI** gives a one-paragraph summary of a long session; `ard screenshot <file>` attaches a picture; `ard pr-status` and `ard pr-comment` show your review on a pull request (and can block merging until you have reviewed) without GitHub Actions.
 
-## Running
+## Usage
 
 ### Record a Claude Code session (hooks)
 
