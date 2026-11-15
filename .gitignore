@@ -1,0 +1,263 @@
+# ==========================================================
+# agent-review-desk .gitignore
+# Principle: commit code only. Never commit user data, secrets, or build output.
+# ==========================================================
+
+# ---------- [1] Product data (most important) ----------
+# Local DB, event logs and screenshots that `ard` creates on the user's machine.
+# They contain agent diffs, commands, paths and sometimes secrets. NEVER commit.
+.ard/
+**/.ard/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+# Event logs (JSONL). Sample data for tests is allowed only inside fixtures folders
+*.jsonl
+!**/fixtures/**/*.jsonl
+!**/__fixtures__/**/*.jsonl
+# Review session dumps, traces, replays
+*.trace
+*.replay
+.ard-sessions/
+review-artifacts/
+screenshots/
+!docs/**/screenshots/
+
+# ---------- [2] Secrets / credentials ----------
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+.npmrc
+.yarnrc.yml
+.netrc
+.pypirc
+secrets/
+**/secrets/
+credentials.json
+service-account*.json
+*-credentials.json
+.aws/
+.gcloud/
+.azure/
+.vercel/
+.netlify/
+.stripe/
+.paddle/
+# Payment / license tokens (result of `ard login`)
+.ard-token
+auth.json
+license.key
+
+# ---------- [3] Node / pnpm ----------
+node_modules/
+**/node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.pnp.*
+*.tgz
+.npm/
+.eslintcache
+.stylelintcache
+.node_repl_history
+# The lockfile is committed (pnpm-lock.yaml). Ignore other package managers' locks
+package-lock.json
+yarn.lock
+bun.lockb
+
+# ---------- [4] Build / bundle output ----------
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.turbo/
+.cache/
+.parcel-cache/
+.vite/
+.svelte-kit/
+.vercel_build_output/
+*.tsbuildinfo
+next-env.d.ts
+storybook-static/
+
+# ---------- [5] Tests / coverage / browser automation ----------
+coverage/
+.nyc_output/
+*.lcov
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+.vitest/
+.jest/
+
+# ---------- [6] Git worktrees / agent workspaces ----------
+# This product runs agents per worktree. Nested worktrees must not be committed.
+.worktrees/
+worktrees/
+.wt/
+# Local/personal agent CLI settings (shared settings .claude/settings.json IS committed)
+.claude/settings.local.json
+.claude/*.local.*
+.claude/projects/
+.claude/todos/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/ide/
+.claude/logs/
+CLAUDE.local.md
+.codex/
+.cursor/
+.aider*
+.continue/
+.gemini/
+.windsurf/
+.agent-scratch/
+scratch/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+
+# ---------- [7] Logs / runtime ----------
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+core
+core.*
+*.dump
+*.heapsnapshot
+
+# ---------- [8] Infra / deploy local state ----------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.docker/
+docker-compose.override.yml
+.wrangler/
+.dev.vars
+.supabase/
+.prisma/
+prisma/*.db
+prisma/*.db-journal
+drizzle/meta/_journal.json.bak
+postgres-data/
+pgdata/
+.pgdata/
+# Local DB dumps
+*.sql.gz
+*.dump.sql
+backup/
+backups/
+
+# ---------- [9] OS-generated files ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.TemporaryItems
+.DocumentRevisions-V100
+.apdisk
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*:Zone.Identifier
+.directory
+.Trash-*
+.nfs*
+
+# ---------- [10] Editors / IDEs ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.history/
+.fleet/
+.zed/
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
+*.code-workspace
+.vim/
+.netrwhist
+Session.vim
+.nvimlog
+tags
+
+# ---------- [11] Source planning documents / large binaries ----------
+# Planning PDF/DOCX files live outside this repo (parent folder). Keep them out even if copied here by mistake.
+GitHub_Trending_*.pdf
+GitHub_Trending_*.docx
+*.docx
+*.pdf
+!docs/**/*.pdf
+# Archives / disk images
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.dmg
+*.iso
+*.pkg
+*.exe
+*.msi
+# Personal notes
+NOTES.private.md
+TODO.private.md
+*.private.*
