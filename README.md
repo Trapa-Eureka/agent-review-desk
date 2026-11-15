@@ -38,7 +38,7 @@ It is built for development teams and agencies that use AI agents and need an au
 | Default policy pack (14 rules) with per-rule overrides in `ard.config.json` | Done |
 | Codex hooks (`ard init --agent codex`): sessions, shell commands and their output; risky-command blocking | Done (no exit code from Codex; checked on Codex 0.169.0) |
 | `ard key set`: keep your Anthropic API key in the system keychain for the AI summary | Done (macOS, Linux with `secret-tool`) |
-| `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (not yet tried on a real pull request) |
+| `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (tried end to end on a real pull request) |
 | AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tested against a stand-in server, not the real API) |
 | Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
 | Paid plans: shared team workspace, cloud sync, roles, single sign-on | Planned |
@@ -136,7 +136,7 @@ What Codex's hooks give ard (checked against payloads captured from a real Codex
 ard run -- claude        # or: ard run -- codex
 ```
 
-The wrapper runs the program with your terminal attached and records the session plus the files it changed, found by comparing the git working tree before and after. Exit codes and Ctrl-C behave as if you ran the program directly.
+The wrapper runs the program with your terminal attached and records the session plus the files it changed, found by comparing the git working tree before and after. In a git repository it also adds `.ard/` to your `.gitignore` the first time (and says so), so a recording, which can hold code and secrets, never ends up in `git add .`. Exit codes and Ctrl-C behave as if you ran the program directly.
 
 | | Hooks (`ard init`) | Wrapper (`ard run`) |
 |---|---|---|
@@ -201,7 +201,7 @@ ard pr-comment                   # posts (or updates) a PR comment listing the s
 - **The comment contains counts and review decisions only**: never code, command output, file names or paths, because a pull request can be public. It updates its own earlier comment instead of adding a new one, and it only ever edits your own comments.
 - `--pr <number>` targets another pull request. `--context <name>` renames the status (letters, digits, `. _ / -`).
 
-Limits, honestly: anyone with write access can post a status named `ard/review` too, so this stops an *accidental* merge without review, not a determined one (the same people can merge anyway). The review happens on the author's machine; GitHub only records who posted the status. Not yet tried against a real pull request, only against a stand-in for `gh` and against the real `gh` for reading: start with `--dry-run`.
+Limits, honestly: anyone with write access can post a status named `ard/review` too, so this stops an *accidental* merge without review, not a determined one (the same people can merge anyway). The review happens on the author's machine; GitHub only records who posted the status. It has been tried end to end on a real pull request (status posted with the normal `gh` login, required as a check, comment updated in place, status gone after a new push). Start with `--dry-run` on yours.
 
 ### Approvals: pause risky actions until you say so
 

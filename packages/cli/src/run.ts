@@ -4,6 +4,7 @@ import { basename, isAbsolute } from "node:path";
 import { constants as osConstants } from "node:os";
 import type { ArdEvent, FileChangeEvent } from "@ard/schema";
 import { changesSince, gitHead, takeSnapshot } from "./git.js";
+import { ensureGitignore } from "./init.js";
 import { LIMITS, appendEvent, ardDirFor, baseFields, eventsPathFor, findProjectRoot, safeText, toProjectPath } from "@ard/core";
 
 export interface RunOptions {
@@ -62,6 +63,18 @@ export async function runWrapped(options: RunOptions): Promise<number> {
   const sessionId = randomUUID();
   const ctx = { sessionId, agent: agentNameFor(program), cwd };
   const started = Date.now();
+
+  // A recording holds code, commands and possibly secrets: keep it out of `git add .`. `ard init` does this too; `ard run` used to
+  // leave .ard/ visible to git. It happens BEFORE the snapshot, so this edit is never mistaken for the agent's work. It is
+  // best effort: a recorder must never stop the program it wraps (a read-only .gitignore, for example, is simply left alone).
+  const ownFolder = toProjectPath(ardDirFor(root, env), root);
+  if (ownFolder === ".ard") {
+    try {
+      if (ensureGitignore(root) === "added") log("ard: added .ard/ to .gitignore (your recordings stay out of git)");
+    } catch {
+      // leave it
+    }
+  }
 
   const snapshot = takeSnapshot(root);
   appendEvent(eventsPath, { ...baseFields(ctx), type: "session_start", capture: "wrapper", argv: argv.map((a) => safeText(a, 1000).text), gitHead: gitHead(root) });

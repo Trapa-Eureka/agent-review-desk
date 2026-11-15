@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentNameFor, runWrapped } from "./run.js";
 import { cleanEnv, fake, git, makeGitRepo, makeTmp, readEvents } from "@ard/core/testutil";
@@ -193,4 +193,94 @@ test("agentNameFor maps known programs", () => {
   assert.equal(agentNameFor("/usr/local/bin/claude"), "claude-code");
   assert.equal(agentNameFor("codex"), "codex");
   assert.equal(agentNameFor("/opt/my-agent"), "my-agent");
+});
+
+// ------------------------------------------------------------ keeping .ard/ out of git
+
+const ignoreLines = (dir: string) => (existsSync(join(dir, ".gitignore")) ? readFileSync(join(dir, ".gitignore"), "utf8").split("\n").filter((l) => l.trim() === ".ard/") : []);
+
+test("`ard run` keeps .ard/ out of git (a recording holds code and maybe secrets): it adds the line once and says so", async () => {
+  const repo = makeGitRepo();
+  try {
+    const first = await runAgent(repo.dir, "require('fs').writeFileSync('work.txt','x')");
+    assert.deepEqual(ignoreLines(repo.dir), [".ard/"]);
+    assert.ok(first.lines.some((l) => /added \.ard\/ to \.gitignore/.test(l)), first.lines.join("|"));
+    const status = git(repo.dir, "status", "--short");
+    assert.equal(status.includes(".ard"), false, `git must not list .ard: ${status}`);
+
+    const second = await runAgent(repo.dir, "require('fs').writeFileSync('work2.txt','y')");
+    assert.deepEqual(ignoreLines(repo.dir), [".ard/"], "not added twice");
+    assert.equal(second.lines.some((l) => /added \.ard\//.test(l)), false, "and not announced again");
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test("ard's own .gitignore edit is never mistaken for the agent's work, but the agent's OWN edit to a committed .gitignore still is", async () => {
+  const repo = makeGitRepo();
+  try {
+    writeFileSync(join(repo.dir, ".gitignore"), "dist/\n");
+    git(repo.dir, "add", ".gitignore");
+    git(repo.dir, "commit", "-q", "-m", "gitignore");
+    const quiet = await runAgent(repo.dir, "require('fs').writeFileSync('work.txt','x')");
+    assert.deepEqual(changes(quiet.events).map((c) => c.path), ["work.txt"], "the .ard/ line was written before the snapshot");
+    assert.equal(ignoreLines(repo.dir).length, 1);
+    const own = await runAgent(repo.dir, "require('fs').appendFileSync('.gitignore','node_modules/\\n')");
+    const edits = changes(own.events).filter((c) => c.path === ".gitignore");
+    assert.equal(edits.length, 1, "an edit the agent makes is still attributed to it");
+    assert.match(edits[0]!.patch ?? "", /\+node_modules\//);
+    assert.doesNotMatch(edits[0]!.patch ?? "", /\+\.ard\//, "and only the agent's lines are in the diff");
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test("an existing .gitignore is appended to, never rewritten, and a project that already ignores .ard/ is left alone", async () => {
+  const repo = makeGitRepo();
+  const ignoring = makeGitRepo();
+  try {
+    writeFileSync(join(repo.dir, ".gitignore"), "node_modules/\ndist/");
+    await runAgent(repo.dir, "0");
+    const text = readFileSync(join(repo.dir, ".gitignore"), "utf8");
+    assert.ok(text.startsWith("node_modules/\ndist/\n"), text);
+    assert.equal(ignoreLines(repo.dir).length, 1);
+
+    writeFileSync(join(ignoring.dir, ".gitignore"), ".ard\n");
+    const before = readFileSync(join(ignoring.dir, ".gitignore"), "utf8");
+    const result = await runAgent(ignoring.dir, "0");
+    assert.equal(readFileSync(join(ignoring.dir, ".gitignore"), "utf8"), before);
+    assert.equal(result.lines.some((l) => /added \.ard\//.test(l)), false);
+  } finally {
+    repo.cleanup();
+    ignoring.cleanup();
+  }
+});
+
+test("outside a git repository nothing is created, and a data folder placed elsewhere needs no ignore line", async () => {
+  const plain = makeTmp("ard-nogit-");
+  const repo = makeGitRepo();
+  const elsewhere = makeTmp("ard-data-");
+  try {
+    await runAgent(plain.dir, "0");
+    assert.equal(existsSync(join(plain.dir, ".gitignore")), false);
+    const lines: string[] = [];
+    await runWrapped({ argv: [process.execPath, "-e", "0"], cwd: repo.dir, env: cleanEnv({ ARD_DIR: elsewhere.dir }), log: (l) => lines.push(l) });
+    assert.equal(existsSync(join(repo.dir, ".gitignore")), false, "ARD_DIR points outside the project: nothing to ignore");
+  } finally {
+    plain.cleanup();
+    repo.cleanup();
+    elsewhere.cleanup();
+  }
+});
+
+test("a .gitignore that cannot be written never stops the wrapped program or its recording", async () => {
+  const repo = makeGitRepo();
+  try {
+    mkdirSync(join(repo.dir, ".gitignore")); // a directory where the file should be: writing fails
+    const { code, events } = await runAgent(repo.dir, "require('fs').writeFileSync('work.txt','x');process.exit(4)");
+    assert.equal(code, 4, "the program's own exit code is still returned");
+    assert.deepEqual(events.map((e) => e.type), ["session_start", "file_change", "session_end"]);
+  } finally {
+    repo.cleanup();
+  }
 });
