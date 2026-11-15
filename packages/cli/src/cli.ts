@@ -5,6 +5,8 @@ import { CloudHttpError, resolveServer, type CloudFetch } from "./cloud/client.j
 import { runSync } from "./cloud/sync.js";
 import { handleClaudeHook } from "./hook.js";
 import { runInit } from "./init.js";
+import { readHidden, runKey } from "./key.js";
+import type { KeyStore } from "@ard/core";
 import { DEFAULT_PORT, runReview } from "./review.js";
 import { runWrapped } from "./run.js";
 import { runScreenshot } from "./screenshot.js";
@@ -19,6 +21,10 @@ export interface Io {
   fetch?: CloudFetch;
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
+  /** `ard key set`: read a secret without showing it. Tests replace it. */
+  readSecret?: (prompt: string) => Promise<string>;
+  /** `ard key`: the keychain to use (undefined: this system's own; null: none). Tests replace it. */
+  keyStore?: KeyStore | null;
 }
 
 export const defaultIo = (): Io => ({
@@ -32,6 +38,12 @@ export const defaultIo = (): Io => ({
   },
   cwd: process.cwd(),
   env: process.env,
+  readSecret: async (prompt) => {
+    if (process.stdin.isTTY) return readHidden(prompt);
+    let data = ""; // piped in, e.g. `pbpaste | ard key set`
+    for await (const chunk of process.stdin) data += chunk;
+    return data;
+  },
 });
 
 const accountIo = (io: Io): AccountIo => ({
@@ -71,6 +83,12 @@ Usage:
   ard screenshot <file> [--session <id>] [--caption <text>]
       Attach a screenshot (PNG, JPEG, GIF or WebP, up to 8 MiB) to a session so it shows in the review UI.
       Without --session it goes to the most recent session. Stays on this machine; never synced.
+
+  ard key set | status | remove
+      Keep your own Anthropic API key (for the optional AI summary in the review UI) in your system keychain
+      (macOS Keychain; Linux with secret-tool), so you need not export it in every terminal. set asks for it without
+      showing it (or reads it from a pipe: pbpaste | ard key set). The key is never written to a project folder,
+      never printed, and goes only to Anthropic when you ask for a summary. ANTHROPIC_API_KEY, if set, wins.
 
   ard review [--port <number>]
       Open the review UI for this project: sessions, diffs, commands, and the approve/reject buttons.
@@ -221,6 +239,21 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         io.err(`ard review: ${(error as Error).message}`);
         return 1;
       }
+    }
+
+    case "key": {
+      const [action, ...extra] = rest;
+      if ((action !== "set" && action !== "status" && action !== "remove") || extra.length > 0) {
+        io.err("ard key: usage: ard key set | status | remove");
+        return 2;
+      }
+      return runKey(action, {
+        out: io.out,
+        err: io.err,
+        env: io.env,
+        readSecret: io.readSecret ?? (async () => ""),
+        ...(io.keyStore === undefined ? {} : { store: io.keyStore }),
+      });
     }
 
     case "screenshot": {

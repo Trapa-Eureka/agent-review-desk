@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatDuration } from "@ard/core";
 import ApprovalCard from "../../../components/ApprovalCard";
+import SummaryPanel from "../../../components/SummaryPanel";
 import AutoRefresh from "@ard/ui/AutoRefresh";
 import DecisionForm from "@ard/ui/DecisionForm";
 import Timeline from "@ard/ui/Timeline";
@@ -71,6 +72,8 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         <DecisionForm endpoint={`/api/sessions/${encodeURIComponent(session.id)}/review`} approveLabel="Approve session" rejectLabel="Reject session" />
         <p className="muted small">You can change your decision later; the newest one is shown, and all of them stay in the log.</p>
       </section>
+
+      <SummaryPanel sessionId={session.id} />
 
       <h2>Timeline</h2>
       <Timeline events={events} screenshotHref={(imageId) => `/api/screenshots/${imageId}`} />

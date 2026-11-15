@@ -17,7 +17,7 @@ const nextConfig = {
   // @ard/core loads node:sqlite and touches the file system: keep it a plain Node dependency, never bundle it.
   // The shared UI ships as TypeScript source; Next compiles it.
   transpilePackages: ["@ard/ui"],
-  serverExternalPackages: ["@ard/core", "@ard/schema"],
+  serverExternalPackages: ["@ard/core", "@ard/schema", "@ard/summary"],
   async headers() {
     return [
       {

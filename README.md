@@ -34,6 +34,7 @@ It is built for development teams and agencies that use AI agents and need an au
 | Approve / reject a whole session after the fact | Done |
 | **Pre-approval**: risky actions pause the agent until you approve them in the UI | Done (opt-in) |
 | Default policy pack (14 rules) with per-rule overrides in `ard.config.json` | Done |
+| AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tested against a stand-in server, not the real API) |
 | Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
 | `ard login` / `logout` / `whoami`: sign in to a cloud workspace with a short code confirmed in the browser | Done |
 | `ard sync`: upload recorded sessions to a team workspace (explicit consent first, resumable, server redacts again) | Done |
@@ -127,8 +128,27 @@ It prints a private link like `http://127.0.0.1:4777/?token=…`. Open it in you
 - **A session's timeline**: what the agent did in order. Commands with output and exit code, file changes as a colored diff, failed tool calls, and every approval decision.
 - **Your review**: *Approve session* / *Reject session* with an optional note. You can change your mind; the newest decision is shown and all of them stay in the log.
 - **Waiting for your decision**: pending approval requests at the top (see below). The page refreshes by itself.
+- **AI summary** _(optional, your own key)_: a one-paragraph summary of a long session. See [AI summary](#ai-summary-bring-your-own-key).
 
 `--port <number>` picks another port (default 4777).
+
+### AI summary (bring your own key)
+
+A long session is hard to read. **Summarize with AI…** on a session page asks Claude for a short summary: what the agent did, which files changed, which commands failed, and what is worth checking first.
+
+```bash
+ard key set                         # once: paste your own key (it is not shown); saved in your system keychain
+ard review                          # then just open a session and press "Summarize with AI…"
+```
+
+Prefer not to save it? Set `ANTHROPIC_API_KEY=...` for that terminal instead; if both exist, the environment variable wins. `ard key status` shows where a key would come from (never the key itself) and `ard key remove` deletes the saved one. You can also pipe it in: `pbpaste | ard key set`.
+
+- **Nothing is sent until you press Send.** The first click only shows a preview: exactly which text would be sent, where (`api.anthropic.com`), with which model, and how big it is. A second, explicit click sends *that* text; if the session changed in between, you are asked to preview again.
+- **It goes from your computer to Anthropic with your key, and is billed to your account.** The key lives in your operating system's keychain (macOS Keychain; on Linux the desktop keyring through `secret-tool`) or in `ANTHROPIC_API_KEY`. It is never written to a file, never in a project folder, never logged or put in a URL, never sent to the browser, and never sent to us (we have no server in this path). It is read from the keychain only at the moment a summary is sent. On Windows there is no keychain support yet: use `ANTHROPIC_API_KEY`.
+- **What is in the text:** commands with exit codes and a short piece of their output, changed files with the changed lines (long diffs are cut), approval decisions, and failures. Secrets are redacted again first, but redaction is best effort: read the preview if the session touched anything sensitive. **Pictures are never sent.** Very long sessions are shortened (the start and the end are kept) and the preview says so.
+- **The default model is `claude-opus-5-5`.** `ARD_SUMMARY_MODEL=claude-haiku-5-5` is much cheaper (about 1/40 of the price per token); `claude-sonnet-5-5` is in between. Other values are ignored.
+- **Treat it as a hint, not a verdict.** A summary can be wrong or miss things. The recorded text is handled as untrusted data (an agent's output can contain text that looks like instructions to the summarizer), the summary is shown as plain text, and it never recommends approving: the timeline stays the record.
+- Not verified against the real Anthropic API yet: it was tested with unit tests and against a local stand-in server that mimics the API. Try it once with your key.
 
 ### Approvals: pause risky actions until you say so
 
@@ -320,6 +340,7 @@ agent-review-desk/
 │   ├── cli/      # the `ard` CLI: init, hook, run, review, login, logout, whoami, sync (@ard/cli)
 │   ├── billing/  # Paddle and Dodo Payments: checkout, portal, signed webhooks, entitlement (@ard/billing)
 │   ├── cloud/    # accounts, organizations, roles, SSO, synced workspaces, billing service (@ard/cloud)
+│   ├── summary/  # optional AI session summary with your own key: digest, prompt, request (@ard/summary)
 │   └── ui/       # review components shared by the local and cloud UIs (@ard/ui)
 ├── apps/
 │   ├── web/      # local Next.js review UI (@ard/web), started by `ard review`
@@ -338,7 +359,7 @@ agent-review-desk/
 - [x] **Phase 1** — event schema, `ard init`, `ard hook`, `ard run`
 - [x] **Phase 2** — SQLite storage layer, review UI, approve/reject, pre-approval of risky actions
 - [x] **Phase 3** — `ard login`, cloud sync, billing (Paddle + Dodo Payments), roles, SSO. Built and tested; first live purchase / sign-in still to do
-- [ ] **Phase 4** — optional: bring-your-own-key AI summaries, multi-agent view, GitHub Action
+- [ ] **Phase 4** — optional: ~~bring-your-own-key AI summaries~~ (done), multi-agent view, GitHub Action
 
 ## Contributing
 

@@ -29,3 +29,4 @@ export function openProject(root: string, env: NodeJS.ProcessEnv = process.env):
   return { repo, eventsPath };
 }
 export * from "./screenshots.js";
+export * from "./keystore.js";
