@@ -1,7 +1,7 @@
 import { CloudError, SESSION_TTL_MS, completeLogin } from "@ard/cloud";
 import { loginDeps } from "../../../../lib/auth";
 import { getCloud } from "../../../../lib/cloud";
-import { redirectTo, sessionCookie, withMessage } from "../../../../lib/http";
+import { clearedLoginCookie, cookieValue, loginCookieName, redirectTo, sessionCookie, withMessage } from "../../../../lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -14,11 +14,12 @@ export async function GET(request: Request) {
       state: url.searchParams.get("state"),
       code: url.searchParams.get("code"),
       error: url.searchParams.get("error"),
+      browserState: cookieValue(request, loginCookieName(cloud)),
     });
     cloud.control.purgeExpired();
     const destination = result.returnTo === "/" && result.orgSlug ? `/o/${result.orgSlug}` : result.returnTo;
-    return redirectTo(cloud, destination, { "set-cookie": sessionCookie(cloud, result.sessionToken, SESSION_TTL_MS / 1000) });
+    return redirectTo(cloud, destination, {}, [sessionCookie(cloud, result.sessionToken, SESSION_TTL_MS / 1000), clearedLoginCookie(cloud)]);
   } catch (error) {
-    return redirectTo(cloud, withMessage("/", "error", error instanceof CloudError ? error.message : "Sign-in failed. Please try again."));
+    return redirectTo(cloud, withMessage("/", "error", error instanceof CloudError ? error.message : "Sign-in failed. Please try again."), {}, [clearedLoginCookie(cloud)]);
   }
 }

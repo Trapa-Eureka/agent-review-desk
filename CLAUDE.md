@@ -18,6 +18,7 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - `pnpm install` · `pnpm build` · `pnpm typecheck`
 - `pnpm test` — schema, core and CLI tests (compiled to `dist/`, run with `node --test`)
 - `pnpm test:hooks` — unit tests for the dev-time blocking hook (always run after changing its rules)
+- `pnpm test:e2e` — real cloud server + real CLI + signed webhooks + local OIDC IdP (needs `pnpm build` first; uses throwaway data and fake credentials, and blanks `ARD_*` so a developer's real `apps/cloud/.env` is never used)
 - `ard review` — the UI needs `pnpm build` first; it takes its project folder and access token from the CLI
 
 ## Design principles
@@ -37,6 +38,8 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - The review UI can approve actions, so it stays locked down (`apps/web/middleware.ts`): 127.0.0.1 only, per-launch token cookie, Host and Origin checks, no framing. Do not add a route that skips the middleware, and do not redirect from it (Next rewrites 127.0.0.1 to localhost, which loses the cookie).
 - Cloud billing: a webhook is tied to an organization **only** through the random nonce we put in the checkout (or ids stored from it), never an id read from the webhook body. Signatures are checked on the raw bytes; events are idempotent and order-safe.
 - Cloud web: cookie-authenticated state changes go through `assertSameOrigin` (`Sec-Fetch-Site` leads; `Origin` alone breaks under `no-referrer`). Do not redirect from middleware. SSO users stay scoped to their org (`homeOrgId`), never merged with platform users. A session belongs to its first uploader; client-uploaded session reviews are dropped; the server redacts again.
+- Screenshots: a picture cannot be redacted, so keeping pictures from hooks is opt-in (`screenshots: true`), they stay in `.ard/screenshots/<sha256>`, `ard sync` skips them and the cloud refuses them. Type comes from the first bytes (PNG/JPEG/GIF/WebP only, never SVG), the id is only ever 64 hex chars, base64 image data never goes into the text log. Hook capture is unverified: Claude Code does not document image data in PostToolUse.
+- Cloud sign-in is bound to the starting browser (login cookie == `state`); no `form-action` in the CSP (Chrome enforces it on the redirect after a form post); fetches of customer-typed URLs connect to the address that was checked (`pinnedFetch`). A late event for a replaced subscription must not overwrite the current one; a webhook `conflict` is answered 409.
 - `ard sync` uploads nothing without `--yes` on first use per org; tokens go only over https (localhost excepted).
 - `ard init` never overwrites a settings or config file it cannot parse, never touches the user's own hooks, is idempotent, and does not write any hook if the config update fails.
 - `ard run` never records ard's own data folder as an agent change, and only attributes changes made during the run.

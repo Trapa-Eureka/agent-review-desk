@@ -1,5 +1,7 @@
 import { createPublicKey, verify as cryptoVerify, type JsonWebKey } from "node:crypto";
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { CloudError } from "./errors.js";
 import { safeEqual } from "./crypto.js";
@@ -47,7 +49,32 @@ const ALLOWED_ALGS = ["RS256", "ES256"] as const;
 
 // ------------------------------------------------------------- SSRF guard
 
-/** Is this literal IP address one that must never be reached on a customer's say-so? */
+/** The eight 16-bit groups of an IPv6 address (any valid spelling, including `::` and a dotted IPv4 tail), or null. */
+function ipv6Groups(address: string): number[] | null {
+  let a = address.toLowerCase().replace(/%.*$/, "");
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a);
+  if (v4) {
+    const [o1, o2, o3, o4] = [v4[1], v4[2], v4[3], v4[4]].map(Number) as [number, number, number, number];
+    a = `${a.slice(0, a.length - v4[0].length)}${((o1 << 8) | o2).toString(16)}:${((o3 << 8) | o4).toString(16)}`;
+  }
+  const halves = a.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const groups = halves.length === 2 ? [...head, ...Array<string>(Math.max(0, 8 - head.length - tail.length)).fill("0"), ...tail] : head;
+  if (groups.length !== 8) return null;
+  const numbers = groups.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : Number.NaN));
+  return numbers.some(Number.isNaN) ? null : numbers;
+}
+
+/**
+ * Is this literal IP address one that must never be reached on a customer's say-so?
+ *
+ * IPv4: the private, loopback, link-local, shared, multicast and reserved ranges.
+ * IPv6 is an ALLOW-list: only global unicast (2000::/3) is reachable, minus the ranges that embed an IPv4 address
+ * (6to4 2002::/16, Teredo 2001::/32) and documentation space. That excludes every spelling of a mapped or translated
+ * IPv4 address (::ffff:7f00:1, 64:ff9b::a9fe:a9fe, ...) in one rule, which a block-list of prefixes kept missing.
+ */
 export function isPrivateAddress(address: string): boolean {
   const kind = isIP(address);
   if (kind === 4) {
@@ -55,15 +82,18 @@ export function isPrivateAddress(address: string): boolean {
     return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
   }
   if (kind === 6) {
-    const lower = address.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isPrivateAddress(mapped[1]!);
-    return lower === "::" || lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || /^fe[89ab]/.test(lower) || lower.startsWith("ff");
+    const g = ipv6Groups(address);
+    if (!g) return true;
+    const first = g[0]!;
+    if (first < 0x2000 || first > 0x3fff) return true;
+    if (first === 0x2002) return true;
+    if (first === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true;
+    return false;
   }
   return true; // not an IP at all: treat as unsafe
 }
 
-async function assertSafeUrl(raw: string, opts: OidcOptions): Promise<URL> {
+async function assertSafeUrl(raw: string, opts: OidcOptions): Promise<{ url: URL; addresses: string[] }> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -73,27 +103,66 @@ async function assertSafeUrl(raw: string, opts: OidcOptions): Promise<URL> {
   if (url.username || url.password) throw new CloudError("bad_request", "URLs with credentials are not allowed.");
   const dev = opts.allowPrivateNetwork === true;
   if (url.protocol !== "https:" && !(dev && url.protocol === "http:")) throw new CloudError("bad_request", "The identity provider URL must use https.");
-  if (dev) return url;
+  if (dev) return { url, addresses: [] };
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) throw new CloudError("bad_request", "That address is not allowed.");
   const addresses = isIP(host) ? [host] : await (opts.resolve ?? defaultResolve)(host).catch(() => []);
   if (addresses.length === 0) throw new CloudError("bad_request", "That address could not be resolved.");
   if (addresses.some(isPrivateAddress)) throw new CloudError("bad_request", "That address is not allowed.");
-  return url;
+  return { url, addresses };
 }
 
 async function defaultResolve(host: string): Promise<string[]> {
   return (await lookup(host, { all: true })).map((r) => r.address);
 }
 
-/** GET/POST with a timeout, no redirects (a redirect could point back inside), and a response size cap. */
+/**
+ * One request to an ALREADY VALIDATED address. Connecting to the address we checked (not to the name, which would be
+ * resolved a second time and could by then point somewhere internal: DNS rebinding) is what makes the SSRF check hold.
+ * TLS still verifies the certificate against the real host name (SNI = the name). The body is cut off as soon as it
+ * exceeds the cap instead of being read in full first.
+ */
+export function pinnedFetch(url: URL, init: { method: string; headers?: Record<string, string>; body?: string }, address: string, signal: AbortSignal): Promise<FetchResponse> {
+  return new Promise((resolve, reject) => {
+    const secure = url.protocol === "https:";
+    const literal = isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0;
+    const headers: Record<string, string> = { ...init.headers, host: url.host };
+    if (init.body !== undefined) headers["content-length"] = String(Buffer.byteLength(init.body));
+    const req = (secure ? httpsRequest : httpRequest)(
+      { host: address, port: url.port || (secure ? 443 : 80), path: `${url.pathname}${url.search}`, method: init.method, headers, signal, ...(secure && !literal ? { servername: url.hostname } : {}) },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_RESPONSE_BYTES) {
+            res.destroy();
+            req.destroy();
+            reject(new CloudError("bad_request", "The identity provider sent an unreasonably large response."));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: async () => Buffer.concat(chunks).toString("utf8") }));
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.end(init.body);
+  });
+}
+
+/** GET/POST with a timeout, no redirects (a redirect could point back inside), pinned to the address we validated, and a response size cap. */
 async function guardedFetch(rawUrl: string, init: { method: string; headers?: Record<string, string>; body?: string }, opts: OidcOptions): Promise<{ status: number; body: string }> {
-  const url = await assertSafeUrl(rawUrl, opts);
-  const doFetch = opts.fetch ?? (globalThis.fetch as unknown as OidcFetch);
+  const { url, addresses } = await assertSafeUrl(rawUrl, opts);
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   let response: FetchResponse;
   try {
-    response = await doFetch(url.toString(), { ...init, redirect: "manual", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  } catch {
+    if (opts.fetch) response = await opts.fetch(url.toString(), { ...init, redirect: "manual", signal });
+    else if (addresses.length > 0) response = await pinnedFetch(url, init, addresses[0]!, signal);
+    else response = await (globalThis.fetch as unknown as OidcFetch)(url.toString(), { ...init, redirect: "manual", signal }); // development only: private networks allowed
+  } catch (error) {
+    if (error instanceof CloudError) throw error;
     throw new CloudError("unavailable", "The identity provider could not be reached.");
   }
   const body = await response.text();
@@ -117,7 +186,7 @@ const text = (v: unknown): string | null => (typeof v === "string" && v !== "" ?
 
 /** Read `<issuer>/.well-known/openid-configuration` and check it describes the issuer we asked about. */
 export async function discover(issuer: string, opts: OidcOptions = {}): Promise<Discovery> {
-  const base = (await assertSafeUrl(issuer, opts)).toString().replace(/\/$/, "");
+  const base = (await assertSafeUrl(issuer, opts)).url.toString().replace(/\/$/, "");
   const { status, body } = await guardedFetch(`${base}/.well-known/openid-configuration`, { method: "GET", headers: { accept: "application/json" } }, opts);
   if (status !== 200) throw new CloudError("bad_request", `The identity provider's discovery document could not be read (HTTP ${status}).`);
   const doc = parseJson(body, "discovery document");

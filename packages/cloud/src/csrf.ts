@@ -12,7 +12,12 @@
  */
 export function isSameOriginRequest(headers: { get(name: string): string | null }, expectedOrigin: string): boolean {
   const site = headers.get("sec-fetch-site");
-  if (site !== null) return site === "same-origin" || site === "none";
   const origin = headers.get("origin");
+  if (site !== null) {
+    if (site !== "same-origin" && site !== "none") return false;
+    // `Origin: null` (no-referrer policy) or no Origin is fine here, but a real foreign Origin is still refused:
+    // two independent signals must both agree.
+    return origin === null || origin === "null" || origin === expectedOrigin;
+  }
   return origin !== null && origin === expectedOrigin;
 }

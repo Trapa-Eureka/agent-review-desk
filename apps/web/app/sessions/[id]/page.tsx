@@ -73,7 +73,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
       </section>
 
       <h2>Timeline</h2>
-      <Timeline events={events} />
+      <Timeline events={events} screenshotHref={(imageId) => `/api/screenshots/${imageId}`} />
     </>
   );
 }

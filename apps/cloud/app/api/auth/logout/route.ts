@@ -1,5 +1,5 @@
 import { getCloud } from "../../../../lib/cloud";
-import { assertSameOrigin, clearedSessionCookie, redirectTo, sessionCookieName } from "../../../../lib/http";
+import { assertSameOrigin, clearedSessionCookie, cookieValue, redirectTo, sessionCookieName } from "../../../../lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +10,7 @@ export async function POST(request: Request) {
   } catch {
     return new Response("Forbidden", { status: 403 });
   }
-  const name = sessionCookieName(cloud);
-  const match = (request.headers.get("cookie") ?? "").split(";").map((c) => c.trim()).find((c) => c.startsWith(`${name}=`));
-  if (match) cloud.control.deleteWebSession(decodeURIComponent(match.slice(name.length + 1)));
+  const token = cookieValue(request, sessionCookieName(cloud));
+  if (token) cloud.control.deleteWebSession(token);
   return redirectTo(cloud, "/", { "set-cookie": clearedSessionCookie(cloud) });
 }

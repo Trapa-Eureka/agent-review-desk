@@ -1,7 +1,7 @@
 import type { Principal } from "./auth.js";
 import { SESSION_TTL_MS } from "./auth.js";
 import type { ControlStore, LoginState, SsoConfig, User } from "./control.js";
-import { newPkce, randomToken, seal, unseal } from "./crypto.js";
+import { newPkce, randomToken, safeEqual, seal, unseal } from "./crypto.js";
 import { CloudError } from "./errors.js";
 import { buildAuthorizationUrl, discover, exchangeCode, verifyIdToken, type IdentityClaims, type OidcClient, type OidcOptions } from "./oidc.js";
 
@@ -72,10 +72,22 @@ export interface LoginResult {
   orgSlug: string | null;
 }
 
-/** The identity provider sent the browser back. Complete (or refuse) the login. */
-export async function completeLogin(deps: LoginDeps, platform: PlatformLoginConfig | null, params: { state: string | null; code: string | null; error: string | null }): Promise<LoginResult> {
+/** The `state` value inside an authorization URL we built: the web layer stores it in a cookie so only THIS browser can finish the login. */
+export function stateOfAuthorizationUrl(url: string): string {
+  return new URL(url).searchParams.get("state") ?? "";
+}
+
+/**
+ * The identity provider sent the browser back. Complete (or refuse) the login.
+ *
+ * `browserState` is what the browser's login cookie held. It must equal `state`: otherwise anyone could finish THEIR OWN
+ * sign-in at the identity provider, stop before the last step, and send the callback link to a victim; the victim's
+ * browser would then be signed in as the attacker (login CSRF), and could be led to link their CLI to the attacker's account.
+ */
+export async function completeLogin(deps: LoginDeps, platform: PlatformLoginConfig | null, params: { state: string | null; code: string | null; error: string | null; browserState: string | null }): Promise<LoginResult> {
   if (params.error) throw new CloudError("unauthenticated", "The identity provider reported a problem. Try signing in again.");
   if (!params.state || !params.code) throw new CloudError("bad_request", "The login response was incomplete.");
+  if (!params.browserState || !safeEqual(params.browserState, params.state)) throw new CloudError("unauthenticated", "This sign-in was not started in this browser. Start again from the sign-in page.");
   const saved: LoginState | null = deps.control.takeLoginState(params.state);
   if (!saved) throw new CloudError("unauthenticated", "This login attempt expired or was already used. Start again.");
 

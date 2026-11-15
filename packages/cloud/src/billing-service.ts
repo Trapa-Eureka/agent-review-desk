@@ -45,6 +45,9 @@ export type BillingOutcome =
   | { status: "unmatched" }
   | { status: "conflict" };
 
+/** HTTP status for the provider. Every outcome is a success except `conflict`, which a human must look at (and which shows up as a failed delivery in the provider's dashboard). */
+export const webhookHttpStatus = (outcome: BillingOutcome): number => (outcome.status === "conflict" ? 409 : 200);
+
 /**
  * Apply a verified webhook to the organization it belongs to. Safe to call any number of times with the same
  * event (redelivery), and with events out of order (the older one is ignored).
@@ -67,6 +70,15 @@ export function applyBillingEvent(control: ControlStore, event: BillingEvent): B
   }
   const orgId = bySubscription ?? fromCheckout;
   if (!orgId) return { status: "unmatched" };
+
+  // A DIFFERENT subscription than the one on record (an old one that was replaced, a late cancellation for it) may only
+  // take over when it is a live new one (active / trialing) or when nothing live is on record. Otherwise a late
+  // "canceled" for the OLD subscription, which still resolves to this organization through its old checkout, would
+  // switch off a team that is paying for the new one.
+  const org = control.getOrg(orgId);
+  const differs = !!org && !!org.billingSubscriptionId && (org.billingProvider !== snapshot.provider || org.billingSubscriptionId !== snapshot.subscriptionId);
+  const recordIsLive = !!org && org.subStatus !== null && org.subStatus !== "canceled" && org.subStatus !== "expired";
+  if (differs && recordIsLive && snapshot.status !== "active" && snapshot.status !== "trialing") return { status: "stale", orgId };
 
   return control.tx(() => {
     if (!control.recordBillingEvent(event.provider, event.eventId)) return { status: "duplicate" } as const;

@@ -34,7 +34,7 @@ It is built for development teams and agencies that use AI agents and need an au
 | Approve / reject a whole session after the fact | Done |
 | **Pre-approval**: risky actions pause the agent until you approve them in the UI | Done (opt-in) |
 | Default policy pack (14 rules) with per-rule overrides in `ard.config.json` | Done |
-| Screenshots of browser actions in the review UI | Planned |
+| Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
 | `ard login` / `logout` / `whoami`: sign in to a cloud workspace with a short code confirmed in the browser | Done |
 | `ard sync`: upload recorded sessions to a team workspace (explicit consent first, resumable, server redacts again) | Done |
 | Team workspace (`apps/cloud`): organizations, shared sessions, timeline and diff, team review | Done |
@@ -205,20 +205,32 @@ ard logout               # revokes this machine's token on the server and forget
 - **Free vs Team:** `ard login` works on any plan, but `ard sync` is refused (with a message that says why) for an organization without an active subscription. Everything you recorded stays on your machine either way.
 - **In the browser**, owners create the organization, invite people, pay, and configure single sign-on; reviewers approve or reject synced sessions with their e-mail on the record.
 
-| Role | Read sessions | Sync | Review | Members & audit log | Billing & SSO |
+| Role | Read sessions | Sync | Review | Manage members, audit log | Billing & SSO |
 |---|---|---|---|---|---|
-| member | yes | yes | no | no | no |
+| member | yes (sees the member list, read-only) | yes | no | no | no |
 | reviewer | yes | yes | **yes** | no | no |
 | admin | yes | yes | yes | **yes** | no |
 | owner | yes | yes | yes | yes | **yes** |
 
 ## Event log
 
-`.ard/events.jsonl` holds one JSON object per line (schema version 1, defined in `packages/schema`). Event types: `session_start`, `session_end`, `tool_use` (before/after each tool call), `command`, `file_change`, and `approval` (a decision: written by the review UI for your clicks, and by the hook for policy denials and timeouts).
+`.ard/events.jsonl` holds one JSON object per line (schema version 1, defined in `packages/schema`). Event types: `session_start`, `session_end`, `tool_use` (before/after each tool call), `command`, `file_change`, `approval` (a decision: written by the review UI for your clicks, and by the hook for policy denials and timeouts), and `screenshot` (a pointer to a picture kept in `.ard/screenshots/`).
 
 Before anything is written, it is **redacted and size-capped**: API keys, tokens, private keys, `KEY=value` style secrets and values under secret-looking names are replaced with `[REDACTED]`; long output and file text are cut with a marker. The folder is created owner-only (`0700`, file `0600`).
 
 Redaction is pattern-based and best effort. Treat `.ard/` as sensitive anyway and never commit it.
+
+### Screenshots
+
+```bash
+ard screenshot login.png --caption "Login page after the fix"   # attach a picture to the latest session (or --session <id>)
+ard init --screenshots                                          # also keep pictures that appear in tool results
+```
+
+- **A picture cannot be redacted.** It may show anything that was on the screen: tokens, personal data, other windows. That is why keeping pictures from tool results is **opt-in** (`"screenshots": true` in `ard.config.json`), and why screenshots stay on your machine: `ard sync` skips them and the team workspace refuses them.
+- Pictures are stored in `.ard/screenshots/<sha256>` (owner-only; the same image is stored once). The log only holds a small `screenshot` event that points at the file.
+- **Only PNG, JPEG, GIF and WebP are accepted**, judged from the file's first bytes, up to 8 MiB. SVG and everything else is refused (SVG can carry script). The review UI serves a picture only by its hash, never by a path.
+- **Whether a hook receives the picture at all depends on the agent.** Claude Code's documentation does not say whether `PostToolUse` carries image data for browser tools, so automatic capture is best effort and has not been verified against a real browser tool. Whatever arrives, base64 image data is never written into the text log. `ard screenshot` always works.
 
 ## Known limitations
 
@@ -228,7 +240,7 @@ Redaction is pattern-based and best effort. Treat `.ard/` as sensitive anyway an
 - The policy is a safety net, not a sandbox. It matches command text and file paths, so a wrapped, encoded or indirect command (`bash -c "$(…)"`, a script that does the deleting) can slip past it, and a harmless command that merely contains a dangerous-looking string can be flagged. It only gates what Claude Code's hooks see; the `ard run` wrapper cannot block anything.
 - While a request waits, the agent is stuck. If you enable approvals, keep `ard review` open (or lower `timeoutSeconds`).
 - The review UI shows what was recorded, which is redacted on a best-effort basis. It runs on your machine only (see [Data and privacy](#data-and-privacy)).
-- Screenshots of browser actions are not captured yet.
+- Screenshots from tool results are best effort (see [Screenshots](#screenshots)); pictures are never redacted, only kept local and opt-in.
 - macOS and Linux only; Windows is untested. Node's built-in SQLite is still marked experimental by Node; ard hides its startup warning.
 - **Cloud:** SQLite and a single server instance (no Postgres yet), no SAML, no outgoing e-mail (invitation links are copied by hand), one flat plan per organization (no per-seat pricing), no automatic data retention or deletion yet. Pre-approval of risky actions stays local: the cloud workspace reviews *finished* sessions, it does not gate a running agent. See [docs/cloud-selfhosting.md](docs/cloud-selfhosting.md#9-known-limits).
 - **Cloud, not yet verified live:** a real purchase with Paddle or Dodo Payments, and a sign-in with a real identity provider. The code paths are tested, including end to end with signed webhooks and real OIDC redirects against a local provider.
@@ -334,4 +346,4 @@ The project is at an early stage. Please open an issue to discuss a change befor
 
 ## License
 
-Not decided yet. Until a license file is added, all rights are reserved.
+[MIT](LICENSE). Note that the license applies to all code in this repository, including the cloud server: anyone may self-host it, including the Team features.

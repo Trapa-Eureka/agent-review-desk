@@ -5,6 +5,9 @@ import DiffView, { DiffStats } from "./DiffView";
 
 const MAX_OPEN_DIFF_LINES = 60;
 
+/** Where the page serves a stored screenshot from. Pages that do not have the image files (the team workspace) leave it out. */
+export type ScreenshotHref = (imageId: string) => string;
+
 function fileDiff(event: FileChangeEvent): DiffLine[] {
   if (event.patch) return parseUnifiedDiff(event.patch).filter((l) => l.kind !== "meta");
   if (event.operation === "delete") return [];
@@ -29,7 +32,7 @@ function Row({ event, kind, children }: { event: ArdEvent; kind: string; childre
   );
 }
 
-function Event({ event }: { event: ArdEvent }) {
+function Event({ event, screenshotHref }: { event: ArdEvent; screenshotHref?: ScreenshotHref }) {
   switch (event.type) {
     case "session_start":
       return (
@@ -114,6 +117,25 @@ function Event({ event }: { event: ArdEvent }) {
       );
     }
 
+    case "screenshot": {
+      const href = screenshotHref ? screenshotHref(event.imageId) : null;
+      return (
+        <Row event={event} kind="screenshot">
+          <strong>Screenshot</strong>
+          {event.toolName ? <span className="muted"> · from {event.toolName}</span> : <span className="muted"> · attached by hand</span>}
+          {event.caption ? <div className="note">“{event.caption}”</div> : null}
+          {href ? (
+            <a className="shot" href={href} target="_blank" rel="noopener noreferrer">
+              {/* A recorded picture: a plain <img>, same origin, never a data URL, and sized by the browser. */}
+              <img src={href} alt={event.caption ?? "Screenshot recorded during the session"} loading="lazy" />
+            </a>
+          ) : (
+            <div className="muted small">This picture is stored on the machine that recorded it and is not available here.</div>
+          )}
+        </Row>
+      );
+    }
+
     case "approval": {
       const approved = event.decision === "approved";
       const scope = event.targetSessionId ? "Session review" : "Action";
@@ -129,11 +151,11 @@ function Event({ event }: { event: ArdEvent }) {
 }
 
 /** The ordered story of a session: what the agent did, and what humans or policy decided about it. */
-export default function Timeline({ events }: { events: ArdEvent[] }) {
+export default function Timeline({ events, screenshotHref }: { events: ArdEvent[]; screenshotHref?: ScreenshotHref }) {
   return (
     <ol className="timeline">
       {events.map((event) => (
-        <Event key={event.id} event={event} />
+        <Event key={event.id} event={event} {...(screenshotHref ? { screenshotHref } : {})} />
       ))}
     </ol>
   );

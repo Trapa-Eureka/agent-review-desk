@@ -557,3 +557,36 @@ test("help documents the cloud commands", async () => {
   await main(["--help"], { out: (t) => out.push(t), err: () => {}, readStdin: async () => "", cwd: process.cwd(), env: cleanEnv() });
   for (const word of ["ard login", "ard logout", "ard whoami", "ard sync", "--dry-run", "--yes", "ARD_CLOUD_URL", "credentials.json"]) assert.ok(out.join("").includes(word), word);
 });
+
+test("screenshots are never uploaded: they are counted, skipped, and the user is told they stay on this machine", async () => {
+  const s = sandbox();
+  try {
+    const shot: ArdEvent = { ...baseFields(ctx("s1")), type: "screenshot", imageId: "a".repeat(64), mediaType: "image/png", bytes: 1234, source: "hook" };
+    record(s.project.dir, s.env, start("s1"), shot, cmd("s1", "ls"), { ...shot, id: "22222222-2222-4222-8222-222222222222" });
+    const dry = ioFor(s.env, fakeCloud({}).fetch);
+    assert.equal(await runSync(dry.io, { cwd: s.project.dir, server: SERVER, org: "acme", yes: false, dryRun: true }), 0);
+    assert.match(dry.out.join("\n"), /2 events from 1 session \(1 session_start, 1 command\)/, "the summary counts only what would be sent");
+    assert.match(dry.out.join("\n"), /2 screenshots stay on this machine/);
+
+    signedIn(s.env);
+    const sent: unknown[] = [];
+    const cloud = fakeCloud({ "GET /api/v1/me": () => ({ json: ME }), "POST /api/v1/orgs/acme/events": (body) => (sent.push(...(body!.events as unknown[])), { json: { accepted: (body!.events as unknown[]).length, duplicates: 0, droppedReviews: 0, rejected: [] } }) });
+    const t = ioFor(s.env, cloud.fetch);
+    assert.equal(await runSync(t.io, { cwd: s.project.dir, server: SERVER, org: "acme", yes: true, dryRun: false }), 0, t.err.join("\n"));
+    assert.equal(sent.length, 2);
+    assert.equal(JSON.stringify(sent).includes("screenshot"), false, "no screenshot event, and no image id, leaves the machine");
+    // A log that holds only screenshots has nothing to upload, and says why.
+    const only = sandbox();
+    try {
+      record(only.project.dir, only.env, shot);
+      signedIn(only.env);
+      const t2 = ioFor(only.env, fakeCloud({ "GET /api/v1/me": () => ({ json: ME }) }).fetch);
+      assert.equal(await runSync(t2.io, { cwd: only.project.dir, server: SERVER, org: "acme", yes: true, dryRun: false }), 0);
+      assert.match(t2.out.join("\n"), /Nothing new to upload.*1 screenshot stays on this machine/);
+    } finally {
+      only.cleanup();
+    }
+  } finally {
+    s.cleanup();
+  }
+});

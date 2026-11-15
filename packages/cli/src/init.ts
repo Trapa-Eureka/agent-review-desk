@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CLAUDE_HOOK_EVENTS } from "./hook.js";
-import { MAX_TIMEOUT_SECONDS, ardDirFor, findProjectRoot, setApprovals } from "@ard/core";
+import { MAX_TIMEOUT_SECONDS, ardDirFor, findProjectRoot, setApprovals, setScreenshots } from "@ard/core";
 
 export interface InitOptions {
   /** Directory `ard init` was run in; the project root is found from here. */
@@ -12,6 +12,8 @@ export interface InitOptions {
   remove: boolean;
   /** true / false: switch pre-approval of risky actions on / off in ard.config.json. undefined: leave it alone. */
   approvals?: boolean;
+  /** true / false: keep (or stop keeping) pictures found in tool results. undefined: leave it alone. */
+  screenshots?: boolean;
   /** Override the hook command (tests). */
   command?: string;
   env?: NodeJS.ProcessEnv;
@@ -25,6 +27,8 @@ export interface InitResult {
   gitignore: "added" | "already-present" | "skipped";
   /** Present when --approvals / --no-approvals was given. */
   approvals?: { path: string; enabled: boolean; changed: boolean };
+  /** Present when --screenshots / --no-screenshots was given. */
+  screenshots?: { path: string; enabled: boolean; changed: boolean };
   warnings: string[];
 }
 
@@ -172,6 +176,11 @@ export function runInit(options: InitOptions): InitResult {
     const config = setApprovals(root, options.approvals);
     approvalsResult = { path: config.path, enabled: options.approvals, changed: config.changed };
   }
+  let screenshotsResult: InitResult["screenshots"];
+  if (options.screenshots !== undefined) {
+    const config = setScreenshots(root, options.screenshots);
+    screenshotsResult = { path: config.path, enabled: options.screenshots, changed: config.changed };
+  }
 
   stripArdHooks(settings);
   addArdHooks(settings, command);
@@ -195,5 +204,6 @@ export function runInit(options: InitOptions): InitResult {
   const action = !changed ? "unchanged" : hadArd ? "updated" : "installed";
   const result: InitResult = { root, settingsPath, action, command, gitignore, warnings };
   if (approvalsResult) result.approvals = approvalsResult;
+  if (screenshotsResult) result.screenshots = screenshotsResult;
   return result;
 }

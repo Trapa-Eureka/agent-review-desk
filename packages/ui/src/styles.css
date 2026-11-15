@@ -463,3 +463,22 @@ details > summary {
     flex-basis: 3.4rem;
   }
 }
+
+/* screenshots */
+.row.screenshot::before {
+  background: var(--accent, #3b5bdb);
+}
+.timeline .shot {
+  display: inline-block;
+  margin-top: 0.4rem;
+  max-width: min(100%, 44rem);
+  border: 1px solid var(--line, #d9d9d4);
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+}
+.timeline .shot img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

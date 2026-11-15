@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { CloudError } from "./errors.js";
 import { newPkce } from "./crypto.js";
-import { buildAuthorizationUrl, discover, exchangeCode, isPrivateAddress, verifyIdToken, type Discovery, type OidcClient, type OidcFetch, type OidcOptions } from "./oidc.js";
+import { buildAuthorizationUrl, discover, exchangeCode, isPrivateAddress, pinnedFetch, verifyIdToken, type Discovery, type OidcClient, type OidcFetch, type OidcOptions } from "./oidc.js";
 import { b64, makeClock, mockIdp } from "./testkit.js";
 
 const CLIENT: OidcClient = { issuer: "https://idp.example.com", clientId: "client-1", clientSecret: "shh" };
@@ -19,10 +21,10 @@ const discovery = (idp: ReturnType<typeof mockIdp>): Discovery => ({ issuer: idp
 // ------------------------------------------------------------------ SSRF
 
 test("private, loopback, link-local and malformed addresses are recognized", () => {
-  for (const bad of ["127.0.0.1", "127.9.9.9", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "0.0.0.0", "100.64.0.1", "224.0.0.1", "255.255.255.255", "::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:10.1.2.3", "not-an-ip", ""]) {
+  for (const bad of ["127.0.0.1", "127.9.9.9", "10.0.0.1", "10.255.255.255", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "0.0.0.0", "100.64.0.1", "224.0.0.1", "255.255.255.255", "::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:10.1.2.3", "::ffff:7f00:1", "::ffff:a9fe:a9fe", "::ffff:8.8.8.8", "::ffff:808:808", "0:0:0:0:0:ffff:7f00:1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001:db8::1", "fec0::1", "100::1", "not-an-ip", ""]) {
     assert.equal(isPrivateAddress(bad), true, bad);
   }
-  for (const good of ["93.184.216.34", "8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "100.63.0.1", "100.128.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"]) {
+  for (const good of ["93.184.216.34", "8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "100.63.0.1", "100.128.0.1", "2606:4700:4700::1111", "2001:4860:4860::8888", "2a00:1450:4001:81b::200e"]) {
     assert.equal(isPrivateAddress(good), false, good);
   }
 });
@@ -259,4 +261,66 @@ test("if the provider's key set cannot be read, nothing is accepted", async () =
   const token = idp.signToken(idp.claimsFor({ nonce: "nonce-1" }, "client-1"));
   const broken: OidcFetch = async (url, init) => (url.endsWith("/jwks") ? { status: 500, text: async () => "boom" } : idp.fetch(url, init));
   await throwsCloud(verifyIdToken(token, discovery(idp), CLIENT, { nonce: "nonce-1" }, { fetch: broken, resolve: PUBLIC_IP, now: clock.now }), "unavailable");
+});
+
+// --------------------------------------------------- connecting to the address we checked
+
+async function withLocalServer<T>(handler: Parameters<typeof createServer>[1], fn: (port: number, seen: { host: string | undefined; body: string }) => Promise<T>): Promise<T> {
+  const seen = { host: undefined as string | undefined, body: "" };
+  const server = createServer(async (req, res) => {
+    seen.host = req.headers.host;
+    for await (const chunk of req) seen.body += chunk;
+    handler!(req, res);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    return await fn((server.address() as AddressInfo).port, seen);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+test("pinnedFetch connects to the validated address, not to the name (a name that would resolve elsewhere never gets looked up)", async () => {
+  await withLocalServer((_req, res) => void res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}'), async (port, seen) => {
+    // The host name below does not resolve anywhere. A client that resolved it again would fail; ours uses 127.0.0.1.
+    const url = new URL(`http://idp-that-does-not-exist.example:${port}/.well-known/openid-configuration?x=1`);
+    const response = await pinnedFetch(url, { method: "GET", headers: { accept: "application/json" } }, "127.0.0.1", AbortSignal.timeout(3000));
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '{"ok":true}');
+    assert.equal(seen.host, `idp-that-does-not-exist.example:${port}`, "the Host header still names the real host");
+  });
+});
+
+test("pinnedFetch sends a POST body with the right length", async () => {
+  await withLocalServer((_req, res) => void res.writeHead(200).end("done"), async (port, seen) => {
+    const body = "grant_type=authorization_code&code=ü";
+    const response = await pinnedFetch(new URL(`http://x.example:${port}/token`), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, "127.0.0.1", AbortSignal.timeout(3000));
+    assert.equal(response.status, 200);
+    assert.equal(seen.body, body);
+  });
+});
+
+test("pinnedFetch stops reading an oversized response instead of buffering all of it", async () => {
+  await withLocalServer((_req, res) => {
+    res.writeHead(200);
+    const chunk = Buffer.alloc(64 * 1024, 97);
+    let sent = 0;
+    const pump = () => {
+      while (sent < 50 * 1024 * 1024) {
+        sent += chunk.length;
+        if (!res.write(chunk)) return void res.once("drain", pump);
+        if (res.destroyed) return;
+      }
+      res.end();
+    };
+    pump();
+  }, async (port) => {
+    await throwsCloud(pinnedFetch(new URL(`http://x.example:${port}/`), { method: "GET" }, "127.0.0.1", AbortSignal.timeout(5000)), "bad_request", /unreasonably large/);
+  });
+});
+
+test("pinnedFetch honours the timeout signal", async () => {
+  await withLocalServer(() => undefined, async (port) => {
+    await assert.rejects(pinnedFetch(new URL(`http://x.example:${port}/`), { method: "GET" }, "127.0.0.1", AbortSignal.timeout(200)));
+  });
 });

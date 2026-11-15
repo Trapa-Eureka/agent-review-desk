@@ -1,4 +1,4 @@
-import { CloudError, INGEST_LIMITS, isCloudError, isSameOriginRequest, principalFromBearer, principalFromSession, safeReturnTo, type Cloud, type Principal } from "@ard/cloud";
+import { CloudError, INGEST_LIMITS, forwardedClient, isCloudError, isSameOriginRequest, principalFromBearer, principalFromSession, safeReturnTo, type Cloud, type Principal } from "@ard/cloud";
 import { absolute } from "./cloud";
 
 /** `__Host-` pins the cookie to this exact host, over https, for the whole site (no Domain attribute possible). */
@@ -27,8 +27,10 @@ export async function api(handler: () => Promise<Response> | Response): Promise<
 }
 
 /** A 303 redirect to a path on THIS site. The host always comes from configuration, never from the request. */
-export function redirectTo(cloud: Cloud, path: string, extraHeaders: Record<string, string> = {}): Response {
-  return new Response(null, { status: 303, headers: { location: absolute(cloud, safeReturnTo(path)), ...extraHeaders } });
+export function redirectTo(cloud: Cloud, path: string, extraHeaders: Record<string, string> = {}, cookies: string[] = []): Response {
+  const headers = new Headers({ location: absolute(cloud, safeReturnTo(path)), ...extraHeaders });
+  for (const cookie of cookies) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 303, headers });
 }
 
 export function withMessage(path: string, kind: "notice" | "error", message: string): string {
@@ -45,10 +47,17 @@ export function assertSameOrigin(request: Request, cloud: Cloud): void {
   if (!isSameOriginRequest(request.headers, cloud.config.baseUrl)) throw new CloudError("forbidden", "This request did not come from this site.");
 }
 
-function cookieValue(request: Request, name: string): string | null {
+/** One cookie's value, or null. A malformed value (bad %-escape) is "no cookie", never an exception. */
+export function cookieValue(request: Request, name: string): string | null {
   for (const part of (request.headers.get("cookie") ?? "").split(";")) {
     const eq = part.indexOf("=");
-    if (eq !== -1 && part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (eq !== -1 && part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
@@ -78,12 +87,27 @@ export function clearedSessionCookie(cloud: Cloud): string {
 }
 
 /**
- * Who is calling, for rate limiting. Behind a reverse proxy set ARD_CLOUD_TRUST_PROXY=1 so the first hop of
- * X-Forwarded-For is used; otherwise that header is spoofable and everyone shares one bucket.
+ * Who is calling, for rate limiting. Behind a reverse proxy set ARD_CLOUD_TRUST_PROXY=1 (one proxy hop; a larger
+ * number means that many hops): the address is read from the RIGHT of X-Forwarded-For, where our own proxy appended it,
+ * because anything to its left was written by the client. Without the setting the header is ignored and everyone
+ * shares one bucket ("direct"): safe against spoofing, but one noisy client can use up everyone's allowance.
  */
 export function clientKey(request: Request): string {
-  if (process.env.ARD_CLOUD_TRUST_PROXY !== "1") return "direct";
-  return (request.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "direct";
+  const hops = Number(process.env.ARD_CLOUD_TRUST_PROXY ?? 0);
+  if (!Number.isInteger(hops) || hops < 1) return "direct";
+  return forwardedClient(request.headers.get("x-forwarded-for"), hops);
+}
+
+/** Cookie that binds a sign-in attempt to the browser that started it (login CSRF defence). */
+export const loginCookieName = (cloud: Cloud): string => (cloud.config.baseUrl.startsWith("https:") ? "__Host-ard_login" : "ard_login");
+
+export function loginCookie(cloud: Cloud, state: string, maxAgeSeconds: number): string {
+  const secure = cloud.config.baseUrl.startsWith("https:") ? "; Secure" : "";
+  return `${loginCookieName(cloud)}=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+export function clearedLoginCookie(cloud: Cloud): string {
+  return loginCookie(cloud, "", 0);
 }
 
 /** Read a request body as text with a hard size cap, refusing early on a declared length that is too big. */

@@ -481,6 +481,12 @@ export class ControlStore {
     return str(row.user_id) === userId;
   }
 
+  /** Who uploaded this session first, or null when nobody has (yet). */
+  sessionOwner(orgId: string, sessionId: string): string | null {
+    const row = this.db.prepare("SELECT user_id FROM uploads WHERE org_id = ? AND session_id = ?").get(orgId, sessionId) as Row | undefined;
+    return row ? str(row.user_id) : null;
+  }
+
   sessionUploaders(orgId: string): Map<string, string> {
     const map = new Map<string, string>();
     for (const r of this.db.prepare("SELECT u.session_id, us.email FROM uploads u JOIN users us ON us.id = u.user_id WHERE u.org_id = ?").all(orgId) as Row[]) map.set(str(r.session_id), str(r.email));

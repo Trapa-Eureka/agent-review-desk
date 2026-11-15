@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { Repository, openDb, redactString, transaction } from "@ard/core";
+import { Repository, openDb, redactString, sanitize, transaction } from "@ard/core";
 import { validateEvent, type ArdEvent } from "@ard/schema";
 import type { ControlStore } from "./control.js";
 import { CloudError } from "./errors.js";
@@ -44,11 +44,18 @@ export class Workspaces {
 }
 
 /**
- * Defence in depth: the CLI redacts before it uploads, but the server cannot assume every client is the
- * current CLI. Run every string through the same redaction again before it is stored.
+ * Defence in depth: the CLI redacts before it uploads, but the server cannot assume every client is the current CLI.
+ * Strings go through the same redaction again; structured fields (`input`, `output`, ...) go through the same deep
+ * `sanitize` the local recorder uses, which also drops values under secret-looking names (`api_key`, `password`, ...)
+ * and caps depth and size. Those values are not "token-shaped" text, so string redaction alone would keep them.
  */
 export function prepareEventForStorage(event: ArdEvent): ArdEvent {
-  return JSON.parse(JSON.stringify(event, (_key, value: unknown) => (typeof value === "string" ? redactString(value) : value))) as ArdEvent;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) {
+    if (value === undefined) continue;
+    out[key] = typeof value === "string" ? redactString(value) : typeof value === "object" && value !== null ? sanitize(value) : value;
+  }
+  return out as unknown as ArdEvent;
 }
 
 export interface IngestResult {
@@ -79,33 +86,41 @@ export function ingestEvents(control: ControlStore, workspaces: Workspaces, inpu
   if (input.events.length > INGEST_LIMITS.maxEvents) throw new CloudError("too_large", `At most ${INGEST_LIMITS.maxEvents} events per request.`);
 
   const result: IngestResult = { accepted: 0, duplicates: 0, droppedReviews: 0, rejected: [] };
-  const toStore: Array<{ event: ArdEvent; bytes: number }> = [];
+  const candidates: Array<{ event: ArdEvent; bytes: number }> = [];
 
   input.events.forEach((raw, index) => {
     const checked = validateEvent(raw);
     if (!checked.ok) return void result.rejected.push({ index, reason: checked.error });
     if (checked.event.type === "approval" && checked.event.targetSessionId) return void result.droppedReviews++;
+    // Pictures cannot be redacted, and the image bytes are not part of an upload anyway: a screenshot event here would be a broken link.
+    if (checked.event.type === "screenshot") return void result.rejected.push({ index, reason: "screenshots are not synced; they stay on the machine that recorded them" });
     const event = prepareEventForStorage(checked.event);
     const bytes = Buffer.byteLength(JSON.stringify(event));
     if (bytes > INGEST_LIMITS.maxEventBytes) return void result.rejected.push({ index, reason: "event is too large" });
-    if (!control.claimSession(input.orgId, event.sessionId, input.userId)) return void result.rejected.push({ index, reason: "this session was uploaded by another member" });
-    toStore.push({ event, bytes });
+    const owner = control.sessionOwner(input.orgId, event.sessionId);
+    if (owner !== null && owner !== input.userId) return void result.rejected.push({ index, reason: "this session was uploaded by another member" });
+    candidates.push({ event, bytes });
   });
 
   const org = control.getOrg(input.orgId);
   const quota = input.quotaBytes ?? INGEST_LIMITS.defaultOrgQuotaBytes;
-  const incoming = toStore.reduce((sum, e) => sum + e.bytes, 0);
-  if (org && org.storedBytes + incoming > quota) throw new CloudError("too_large", "This organization has reached its storage limit.");
 
+  // Everything below is one transaction on the workspace file. Order matters: store, then check the quota against what
+  // was NEWLY stored (events we already hold cost nothing, so a re-upload near the limit still works), and only then
+  // claim the sessions. A refused upload throws here, rolls every insert back, and leaves no session claimed.
   workspaces.with(input.orgId, (repo) => {
     transaction(repo.db, () => {
       let stored = 0;
-      for (const { event, bytes } of toStore) {
+      const sessions = new Set<string>();
+      for (const { event, bytes } of candidates) {
         if (repo.insertEvent(event)) {
           result.accepted++;
           stored += bytes;
         } else result.duplicates++;
+        sessions.add(event.sessionId);
       }
+      if (org && org.storedBytes + stored > quota) throw new CloudError("too_large", "This organization has reached its storage limit.");
+      for (const sessionId of sessions) control.claimSession(input.orgId, sessionId, input.userId);
       if (stored > 0) control.addStoredBytes(input.orgId, stored);
     });
   });

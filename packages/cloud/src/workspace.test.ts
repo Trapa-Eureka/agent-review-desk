@@ -181,3 +181,65 @@ test("an uploaded session can be reviewed in the cloud workspace without any JSO
     s.h.cleanup();
   }
 });
+
+test("a refused upload (over quota) claims no session and stores nothing, so the right member can still upload it later", () => {
+  const s = setup();
+  try {
+    ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events: [start("seed")], quotaBytes: 100_000 });
+    const used = s.h.control.getOrg(s.a.id)!.storedBytes;
+    // Bob tries to upload a new session that does not fit.
+    throwsCloud(() => ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.bob.id, events: [start("bobs"), command("bobs", "x".repeat(500))], quotaBytes: used + 50 }), "too_large");
+    assert.equal(s.h.control.sessionOwner(s.a.id, "bobs"), null, "the refused upload did not claim the session");
+    assert.equal(s.h.workspaces.with(s.a.id, (repo) => repo.sessionEvents("bobs").length), 0, "and stored none of its events");
+    assert.equal(s.h.control.getOrg(s.a.id)!.storedBytes, used);
+    // Alice cannot be locked out of a session id by someone else's refused upload either.
+    const result = ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events: [start("bobs")], quotaBytes: 100_000 });
+    assert.equal(result.accepted, 1);
+    assert.equal(s.h.control.sessionOwner(s.a.id, "bobs"), s.alice.id);
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("re-uploading events we already hold is not refused for quota, because they cost nothing", () => {
+  const s = setup();
+  try {
+    const events = [start("s1"), command("s1", "ls")];
+    ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events });
+    const used = s.h.control.getOrg(s.a.id)!.storedBytes;
+    const again = ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events, quotaBytes: used }); // exactly full
+    assert.deepEqual([again.accepted, again.duplicates], [0, 2]);
+    assert.equal(s.h.control.getOrg(s.a.id)!.storedBytes, used);
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("the server also scrubs STRUCTURED fields: values under secret-looking names are dropped even when they look like nothing special", () => {
+  const s = setup();
+  try {
+    const tool: ArdEvent = { ...baseFields(ctx("s1")), type: "tool_use", phase: "pre", toolName: "Custom", input: { api_key: "abc123", password: "hunter2", nested: { Authorization: "plain-looking-value", note: "fine" }, list: [{ secret: "s3cr3t" }] } };
+    ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events: [tool] });
+    const stored = JSON.stringify(s.h.workspaces.with(s.a.id, (repo) => repo.sessionEvents("s1")));
+    for (const leaked of ["abc123", "hunter2", "plain-looking-value", "s3cr3t"]) assert.equal(stored.includes(leaked), false, leaked);
+    assert.match(stored, /fine/, "harmless values are kept");
+    assert.match(stored, /REDACTED/);
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("screenshot events are refused with a clear reason (pictures stay on the machine that recorded them), the rest of the upload still goes in", () => {
+  const s = setup();
+  try {
+    const shot: ArdEvent = { ...baseFields(ctx("s1")), type: "screenshot", imageId: "a".repeat(64), mediaType: "image/png", bytes: 10, source: "hook" };
+    const result = ingestEvents(s.h.control, s.h.workspaces, { orgId: s.a.id, userId: s.alice.id, events: [start("s1"), shot, command("s1", "ls")] });
+    assert.equal(result.accepted, 2);
+    assert.equal(result.rejected.length, 1);
+    assert.deepEqual(result.rejected[0]!.index, 1);
+    assert.match(result.rejected[0]!.reason, /screenshots are not synced/);
+    assert.equal(s.h.workspaces.with(s.a.id, (repo) => repo.sessionEvents("s1").some((e) => e.type === "screenshot")), false);
+  } finally {
+    s.h.cleanup();
+  }
+});

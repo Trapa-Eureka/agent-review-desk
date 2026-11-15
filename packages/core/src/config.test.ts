@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
-import { CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, configPath, loadConfig, setApprovals } from "./config.js";
+import { CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, configPath, loadConfig, setApprovals, setScreenshots } from "./config.js";
 import { makeTmp } from "./testutil.js";
 
 function withDir(fn: (dir: string) => void) {
@@ -16,7 +16,7 @@ const write = (dir: string, text: string) => writeFileSync(configPath(dir), text
 
 test("no config file: approvals are off, defaults apply, no warnings", () => {
   withDir((dir) => {
-    assert.deepEqual(loadConfig(dir), { approvals: false, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, rules: {}, warnings: [] });
+    assert.deepEqual(loadConfig(dir), { approvals: false, screenshots: false, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, rules: {}, warnings: [] });
   });
 });
 
@@ -80,5 +80,33 @@ test("setApprovals refuses to overwrite a file it cannot parse", () => {
     assert.equal(readFileSync(configPath(dir), "utf8"), "{ nope");
     write(dir, "[1]");
     assert.throws(() => setApprovals(dir, true), /must contain a JSON object/);
+  });
+});
+
+test("screenshots are OFF unless the config says true; a wrong type falls back to OFF with a warning", () => {
+  withDir((dir) => {
+    assert.equal(loadConfig(dir).screenshots, false);
+    write(dir, JSON.stringify({ screenshots: true }));
+    assert.equal(loadConfig(dir).screenshots, true);
+    for (const bad of ["yes", 1, null, []]) {
+      write(dir, JSON.stringify({ screenshots: bad }));
+      const config = loadConfig(dir);
+      assert.equal(config.screenshots, false, JSON.stringify(bad));
+      assert.match(config.warnings.join(" "), /"screenshots" must be true or false/);
+    }
+  });
+});
+
+test("setScreenshots writes only its own key, keeps the rest, and refuses to overwrite a file it cannot parse", () => {
+  withDir((dir) => {
+    write(dir, JSON.stringify({ approvals: true, rules: { "git-force-push": "deny" } }));
+    const r = setScreenshots(dir, true);
+    assert.deepEqual([r.created, r.changed], [false, true]);
+    const config = loadConfig(dir);
+    assert.deepEqual([config.approvals, config.screenshots, config.rules], [true, true, { "git-force-push": "deny" }]);
+    assert.equal(setScreenshots(dir, true).changed, false, "idempotent");
+    write(dir, "{ not json");
+    assert.throws(() => setScreenshots(dir, true), /will not overwrite/);
+    assert.equal(readFileSync(configPath(dir), "utf8"), "{ not json");
   });
 });

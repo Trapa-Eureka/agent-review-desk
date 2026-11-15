@@ -1,9 +1,10 @@
-import type { ArdEvent, FileChangeEvent } from "@ard/schema";
+import type { ArdEvent, FileChangeEvent, ScreenshotEvent } from "@ard/schema";
 import {
   LIMITS,
   appendEvent,
   baseFields,
   evaluatePolicy,
+  extractImages,
   eventsPathFor,
   findProjectRoot,
   loadConfig,
@@ -11,10 +12,12 @@ import {
   recordApprovalEvent,
   safeText,
   sanitize,
+  saveScreenshot,
   summarizeCall,
   toProjectPath,
   waitForDecision,
   type EventContext,
+  type FoundImage,
   type WaitOptions,
 } from "@ard/core";
 
@@ -164,14 +167,17 @@ export function eventsFromClaudePayload(payload: ClaudeHookPayload, root: string
     case "PreToolUse":
       return [withToolUseId({ ...baseFields(ctx), type: "tool_use" as const, phase: "pre" as const, toolName, input: preInput(toolName, payload.tool_input) }, toolUseId)];
     case "PostToolUse": {
-      const response = rec(payload.tool_response);
+      // Pictures in a tool result are NEVER written into the log as text (base64 would bloat it and is useless there):
+      // they are replaced by a small placeholder here. Whether the pictures are kept is decided in recordPayload.
+      const stripped = extractImages(payload.tool_response).stripped;
+      const response = rec(stripped);
       const derived: ArdEvent[] =
         toolName === "Bash"
           // PostToolUse only fires for successful calls, and Claude Code gives no numeric exit code, so success means 0.
           ? [commandEvent(ctx, input, toolUseId, { exitCode: 0, stdout: response.stdout, stderr: response.stderr, interrupted: response.interrupted === true })]
           : fileChanges(ctx, root, toolName, input, response, toolUseId);
       const post: ArdEvent = withToolUseId({ ...baseFields(ctx), type: "tool_use" as const, phase: "post" as const, toolName, ok: true }, toolUseId);
-      if (derived.length === 0 && payload.tool_response !== undefined) post.output = sanitize(payload.tool_response);
+      if (derived.length === 0 && payload.tool_response !== undefined) post.output = sanitize(stripped);
       return [post, ...derived];
     }
     case "PostToolUseFailure": {
@@ -185,6 +191,26 @@ export function eventsFromClaudePayload(payload: ClaudeHookPayload, root: string
     default:
       return []; // events we do not record
   }
+}
+
+/** Keep the pictures found in a tool result (only when ard.config.json says "screenshots": true). Never throws: a recorder must not break the agent. */
+function screenshotEventsFor(images: FoundImage[], post: ArdEvent, root: string, env: NodeJS.ProcessEnv): ScreenshotEvent[] {
+  const out: ScreenshotEvent[] = [];
+  for (const image of images) {
+    try {
+      const saved = saveScreenshot(root, image.data, env);
+      const ctx: EventContext = { sessionId: post.sessionId, agent: post.agent, cwd: post.cwd, ...(post.wrapperSessionId ? { wrapperSessionId: post.wrapperSessionId } : {}) };
+      const event: ScreenshotEvent = { ...baseFields(ctx), type: "screenshot", imageId: saved.imageId, mediaType: saved.mediaType, bytes: saved.bytes, source: "hook" };
+      if (post.type === "tool_use") {
+        event.toolName = post.toolName;
+        if (post.toolUseId) event.toolUseId = post.toolUseId;
+      }
+      out.push(event);
+    } catch {
+      // an image we cannot keep is simply not kept
+    }
+  }
+  return out;
 }
 
 export interface Recorded {
@@ -209,6 +235,20 @@ export function recordPayload(stdinText: string, env: NodeJS.ProcessEnv = proces
   const root = projectDir ?? findProjectRoot(str(payload.cwd) ?? fallbackCwd);
   const events = eventsFromClaudePayload(payload, root, env);
   if (events.length === 0) return null;
+
+  if (payload.hook_event_name === "PostToolUse") {
+    const post = events.find((e) => e.type === "tool_use" && e.phase === "post");
+    const { images } = extractImages(payload.tool_response);
+    if (post && images.length > 0) {
+      let keep = false;
+      try {
+        keep = loadConfig(root).screenshots;
+      } catch {
+        // an unreadable config means "off"
+      }
+      if (keep) events.push(...screenshotEventsFor(images, post, root, env));
+    }
+  }
 
   const path = eventsPathFor(root, env);
   for (const event of events) appendEvent(path, event);

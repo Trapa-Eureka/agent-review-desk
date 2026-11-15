@@ -7,6 +7,7 @@ import { handleClaudeHook } from "./hook.js";
 import { runInit } from "./init.js";
 import { DEFAULT_PORT, runReview } from "./review.js";
 import { runWrapped } from "./run.js";
+import { runScreenshot } from "./screenshot.js";
 
 export interface Io {
   out: (text: string) => void;
@@ -54,14 +55,22 @@ function version(): string {
 export const HELP = `ard — record what AI coding agents do, so you can review and approve it
 
 Usage:
-  ard init [--approvals | --no-approvals] [--shared] [--remove] [--dir <path>]
+  ard init [--approvals | --no-approvals] [--screenshots | --no-screenshots] [--shared] [--remove] [--dir <path>]
       Register ard's hooks for Claude Code in this project and create the local .ard/ folder.
       Default writes .claude/settings.local.json (personal, git-ignored, absolute paths).
       --approvals     block risky actions (force push, rm -rf ~, secrets, ...) until you approve
                       them in the review UI. Writes "approvals": true to ard.config.json.
       --no-approvals  turn that off again
+      --screenshots   keep pictures found in tool results (e.g. browser screenshots) in .ard/screenshots/.
+                      Writes "screenshots": true to ard.config.json. A picture cannot be redacted: it may show
+                      anything that was on the screen, so it is opt-in, stays on this machine and is never synced.
+      --no-screenshots  turn that off again (pictures already kept stay)
       --shared        write .claude/settings.json instead (committed; needs 'ard' on PATH)
       --remove        remove ard's hooks again (recordings in .ard/ are kept)
+
+  ard screenshot <file> [--session <id>] [--caption <text>]
+      Attach a screenshot (PNG, JPEG, GIF or WebP, up to 8 MiB) to a session so it shows in the review UI.
+      Without --session it goes to the most recent session. Stays on this machine; never synced.
 
   ard review [--port <number>]
       Open the review UI for this project: sessions, diffs, commands, and the approve/reject buttons.
@@ -130,6 +139,8 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       const remove = takeFlag(args, "--remove");
       const on = takeFlag(args, "--approvals");
       const off = takeFlag(args, "--no-approvals");
+      const shotsOn = takeFlag(args, "--screenshots");
+      const shotsOff = takeFlag(args, "--no-screenshots");
       const dir = takeValue(args, "--dir") ?? io.cwd;
       if (args.length > 0) {
         io.err(`ard init: unknown argument: ${args.join(" ")}`);
@@ -139,9 +150,14 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         io.err("ard init: --approvals and --no-approvals cannot be used together");
         return 2;
       }
+      if (shotsOn && shotsOff) {
+        io.err("ard init: --screenshots and --no-screenshots cannot be used together");
+        return 2;
+      }
       try {
         const approvals = on ? true : off ? false : undefined;
-        const result = runInit({ dir, shared, remove, ...(approvals === undefined ? {} : { approvals }), env: io.env });
+        const screenshots = shotsOn ? true : shotsOff ? false : undefined;
+        const result = runInit({ dir, shared, remove, ...(approvals === undefined ? {} : { approvals }), ...(screenshots === undefined ? {} : { screenshots }), env: io.env });
         for (const warning of result.warnings) io.err(`warning: ${warning}`);
         if (result.action === "removed") io.out(`Removed ard hooks from ${result.settingsPath}. Recordings in .ard/ were kept.`);
         else if (result.action === "nothing-to-remove") io.out(`No ard hooks found in ${result.settingsPath}.`);
@@ -153,6 +169,10 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
           if (result.approvals) {
             io.out(`  approvals:    ${result.approvals.enabled ? "ON" : "off"} (${result.approvals.path}${result.approvals.changed ? "" : ", unchanged"})`);
             if (result.approvals.enabled) io.out('  Risky actions will now wait for you. Run "ard review" to approve or reject them.');
+          }
+          if (result.screenshots) {
+            io.out(`  screenshots:  ${result.screenshots.enabled ? "ON" : "off"} (${result.screenshots.path}${result.screenshots.changed ? "" : ", unchanged"})`);
+            if (result.screenshots.enabled) io.out("  Pictures in tool results are kept in .ard/screenshots/. They are NOT redacted and are never synced; treat .ard/ as sensitive.");
           }
           io.out("Restart Claude Code (or open /hooks) for the new hooks to take effect.");
         }
@@ -199,6 +219,24 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         return await runReview({ cwd: io.cwd, env: io.env, port, log: io.err });
       } catch (error) {
         io.err(`ard review: ${(error as Error).message}`);
+        return 1;
+      }
+    }
+
+    case "screenshot": {
+      const args = [...rest];
+      const session = takeValue(args, "--session");
+      const caption = takeValue(args, "--caption");
+      if (args.length !== 1 || args[0]!.startsWith("-")) {
+        io.err(args.length === 0 ? "ard screenshot: no file given. Usage: ard screenshot <file> [--session <id>] [--caption <text>]" : `ard screenshot: expected exactly one file, got: ${args.join(" ")}`);
+        return 2;
+      }
+      try {
+        const result = runScreenshot({ file: args[0]!, ...(session === undefined ? {} : { session }), ...(caption === undefined ? {} : { caption }), cwd: io.cwd, env: io.env });
+        io.out(`Attached ${result.event.mediaType} (${result.event.bytes} bytes) to session ${result.event.sessionId}.`);
+        return 0;
+      } catch (error) {
+        io.err(`ard screenshot: ${(error as Error).message}`);
         return 1;
       }
     }

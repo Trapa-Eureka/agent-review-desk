@@ -50,6 +50,8 @@ export interface Pending {
   events: Array<{ event: ArdEvent; endOffset: number; bytes: number }>;
   /** Lines that were skipped (not JSON, or not a valid event). */
   invalid: number;
+  /** Screenshot events. They are never uploaded: pictures cannot be redacted, so they stay on this machine. */
+  screenshots: number;
   /** Byte offset after the last complete line read (where to continue next time). */
   endOffset: number;
 }
@@ -59,10 +61,10 @@ export interface Pending {
  * it will be picked up by the next sync. Offsets are in BYTES, so multi-byte text cannot throw them off.
  */
 export function readPending(eventsPath: string, offset: number): Pending {
-  if (!existsSync(eventsPath)) return { events: [], invalid: 0, endOffset: offset };
+  if (!existsSync(eventsPath)) return { events: [], invalid: 0, screenshots: 0, endOffset: offset };
   const size = statSync(eventsPath).size;
   const start = size < offset ? 0 : offset; // the log was replaced or cleared: start again (the server ignores duplicates)
-  if (size === start) return { events: [], invalid: 0, endOffset: start };
+  if (size === start) return { events: [], invalid: 0, screenshots: 0, endOffset: start };
   const buffer = Buffer.alloc(size - start);
   const fd = openSync(eventsPath, "r");
   let read = 0;
@@ -77,6 +79,7 @@ export function readPending(eventsPath: string, offset: number): Pending {
   }
   const events: Pending["events"] = [];
   let invalid = 0;
+  let screenshots = 0;
   let lineStart = 0;
   for (let i = 0; i < read; i++) {
     if (buffer[i] !== 0x0a) continue;
@@ -85,7 +88,8 @@ export function readPending(eventsPath: string, offset: number): Pending {
     if (raw !== "") {
       try {
         const checked = validateEvent(JSON.parse(raw));
-        if (checked.ok) events.push({ event: checked.event, endOffset, bytes: i - lineStart + 1 });
+        if (checked.ok && checked.event.type === "screenshot") screenshots++;
+        else if (checked.ok) events.push({ event: checked.event, endOffset, bytes: i - lineStart + 1 });
         else invalid++;
       } catch {
         invalid++;
@@ -93,7 +97,7 @@ export function readPending(eventsPath: string, offset: number): Pending {
     }
     lineStart = i + 1;
   }
-  return { events, invalid, endOffset: start + lineStart };
+  return { events, invalid, screenshots, endOffset: start + lineStart };
 }
 
 /** Split events into requests that respect the server's limits. */
@@ -152,12 +156,13 @@ export async function runSync(io: AccountIo, options: SyncOptions): Promise<numb
   const known = state.targets[target(slug)];
   const pending = readPending(eventsPath, known?.offset ?? 0);
   const where = `"${slug}" at ${options.server}`;
+  const staysHere = pending.screenshots > 0 ? ` ${pending.screenshots} screenshot${pending.screenshots === 1 ? "" : "s"} stay${pending.screenshots === 1 ? "s" : ""} on this machine (pictures cannot be redacted, so they are never uploaded).` : "";
 
   if (pending.events.length === 0) {
-    io.out(pending.invalid > 0 ? `Nothing new to upload to ${where} (${pending.invalid} unreadable line(s) were skipped).` : `Nothing new to upload to ${where}.`);
+    io.out((pending.invalid > 0 ? `Nothing new to upload to ${where} (${pending.invalid} unreadable line(s) were skipped).` : `Nothing new to upload to ${where}.`) + staysHere);
     return 0;
   }
-  io.out(`${summarize(pending.events)} to upload to ${where}.`);
+  io.out(`${summarize(pending.events)} to upload to ${where}.${staysHere}`);
 
   if (options.dryRun) {
     io.out("Dry run: nothing was sent. Secrets were already redacted when this was recorded, and the server redacts again.");

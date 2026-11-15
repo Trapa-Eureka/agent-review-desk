@@ -8,8 +8,11 @@ const base = {
   "connect-src": ["'self'"],
   "frame-ancestors": ["'none'"],
   "base-uri": ["'none'"],
-  // Forms post to this site only. (Checkout redirects are navigations, not form posts.)
-  "form-action": ["'self'"],
+  // NO `form-action`. Chrome applies it to the redirect that FOLLOWS a form post, and our sign-in, SSO, "Pay with ..." and
+  // "Open billing portal" buttons are form posts answered by a 303 to another site (the identity provider, the
+  // checkout, the billing portal). `form-action 'self'` would make Chrome silently refuse every one of them, and the
+  // list of allowed hosts cannot be known (customers bring their own SSO provider). Forged forms are stopped by
+  // `assertSameOrigin` (Sec-Fetch-Site) and SameSite cookies instead.
 };
 
 /**

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { principalFromSession } from "./auth.js";
 import { CloudError } from "./errors.js";
-import { LOGIN_STATE_TTL_MS, SSO_SECRET_PURPOSE, beginPlatformLogin, beginSsoLogin, callbackUrl, completeLogin, safeReturnTo, saveSsoSettings, type LoginDeps, type PlatformLoginConfig } from "./login.js";
+import { LOGIN_STATE_TTL_MS, stateOfAuthorizationUrl, SSO_SECRET_PURPOSE, beginPlatformLogin, beginSsoLogin, callbackUrl, completeLogin, safeReturnTo, saveSsoSettings, type LoginDeps, type PlatformLoginConfig } from "./login.js";
 import { unseal } from "./crypto.js";
 import { TEST_SECRET, makeHarness, mockIdp } from "./testkit.js";
 
@@ -33,12 +33,12 @@ function setup() {
 }
 
 type Setup = ReturnType<typeof setup>;
-const stateOf = (url: string) => new URL(url).searchParams.get("state")!;
+const stateOf = (url: string) => stateOfAuthorizationUrl(url);
 
 async function signInPlatform(s: Setup, claims: Parameters<ReturnType<typeof mockIdp>["issueCode"]>[2] = {}, returnTo = "/") {
   const url = await beginPlatformLogin(s.deps, PLATFORM, returnTo);
   const code = s.platformIdp.issueCode(url, PLATFORM.clientId, claims);
-  return completeLogin(s.deps, PLATFORM, { state: stateOf(url), code, error: null });
+  return completeLogin(s.deps, PLATFORM, { state: stateOf(url), browserState: stateOf(url), code, error: null });
 }
 
 async function configureSso(s: Setup, over: Partial<{ emailDomain: string; defaultRole: string }> = {}) {
@@ -48,7 +48,7 @@ async function configureSso(s: Setup, over: Partial<{ emailDomain: string; defau
 async function signInSso(s: Setup, claims: Parameters<ReturnType<typeof mockIdp>["issueCode"]>[2] = {}) {
   const url = await beginSsoLogin(s.deps, "acme", "/o/acme");
   const code = s.companyIdp.issueCode(url, "acme-client", claims);
-  return completeLogin(s.deps, null, { state: stateOf(url), code, error: null });
+  return completeLogin(s.deps, null, { state: stateOf(url), browserState: stateOf(url), code, error: null });
 }
 
 // -------------------------------------------------------------- return_to
@@ -106,13 +106,13 @@ test("a login attempt can complete only once, and only before it expires", async
   try {
     const url = await beginPlatformLogin(s.deps, PLATFORM, "/");
     const code1 = s.platformIdp.issueCode(url, PLATFORM.clientId, {});
-    await completeLogin(s.deps, PLATFORM, { state: stateOf(url), code: code1, error: null });
+    await completeLogin(s.deps, PLATFORM, { state: stateOf(url), browserState: stateOf(url), code: code1, error: null });
     const code2 = s.platformIdp.issueCode(url, PLATFORM.clientId, {});
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), code: code2, error: null }), "unauthenticated", /expired or was already used/);
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), browserState: stateOf(url), code: code2, error: null }), "unauthenticated", /expired or was already used/);
 
     const stale = await beginPlatformLogin(s.deps, PLATFORM, "/");
     s.h.clock.advance(LOGIN_STATE_TTL_MS + 1);
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(stale), code: s.platformIdp.issueCode(stale, PLATFORM.clientId, {}), error: null }), "unauthenticated", /expired/);
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(stale), browserState: stateOf(stale), code: s.platformIdp.issueCode(stale, PLATFORM.clientId, {}), error: null }), "unauthenticated", /expired/);
   } finally {
     s.h.cleanup();
   }
@@ -123,10 +123,10 @@ test("ATTACK: a callback with a state we never issued (login CSRF) is refused", 
   try {
     const url = await beginPlatformLogin(s.deps, PLATFORM, "/");
     const code = s.platformIdp.issueCode(url, PLATFORM.clientId, {});
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: "attacker-state", code, error: null }), "unauthenticated");
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: null, code, error: null }), "bad_request");
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), code: null, error: null }), "bad_request");
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), code, error: "access_denied" }), "unauthenticated");
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: "attacker-state", browserState: "attacker-state", code, error: null }), "unauthenticated");
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: null, browserState: null, code, error: null }), "bad_request");
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), browserState: stateOf(url), code: null, error: null }), "bad_request");
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(url), browserState: stateOf(url), code, error: "access_denied" }), "unauthenticated");
   } finally {
     s.h.cleanup();
   }
@@ -138,7 +138,7 @@ test("ATTACK: an ID token minted for a different login attempt (wrong nonce) is 
     const mine = await beginPlatformLogin(s.deps, PLATFORM, "/");
     const theirs = await beginPlatformLogin(s.deps, PLATFORM, "/");
     const codeForTheirs = s.platformIdp.issueCode(theirs, PLATFORM.clientId, { email: "victim@example.com" });
-    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(mine), code: codeForTheirs, error: null }), "unauthenticated");
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state: stateOf(mine), browserState: stateOf(mine), code: codeForTheirs, error: null }), "unauthenticated");
   } finally {
     s.h.cleanup();
   }
@@ -148,7 +148,7 @@ test("platform login when the server has no provider configured is unavailable, 
   const s = setup();
   try {
     const url = await beginPlatformLogin(s.deps, PLATFORM, "/");
-    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url), code: s.platformIdp.issueCode(url, PLATFORM.clientId, {}), error: null }), "unavailable");
+    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url), browserState: stateOf(url), code: s.platformIdp.issueCode(url, PLATFORM.clientId, {}), error: null }), "unavailable");
   } finally {
     s.h.cleanup();
   }
@@ -292,10 +292,10 @@ test("SSO: a changed client secret at the IdP, or removed settings, fail cleanly
     const url = await beginSsoLogin(s.deps, "acme", "/");
     const code = s.companyIdp.issueCode(url, "acme-client", { email: "erin@acme.com" });
     s.h.control.removeSsoConfig(s.org.id);
-    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url), code, error: null }), "unavailable", /no longer configured/);
+    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url), browserState: stateOf(url), code, error: null }), "unavailable", /no longer configured/);
     await saveSsoSettings(s.deps, s.ownerP, s.org.id, { issuer: s.companyIdp.issuer, clientId: "acme-client", clientSecret: "WRONG-secret", emailDomain: "acme.com", defaultRole: "member" });
     const url2 = await beginSsoLogin(s.deps, "acme", "/");
-    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url2), code: s.companyIdp.issueCode(url2, "acme-client", { email: "erin@acme.com" }), error: null }), "unauthenticated", /invalid_client/);
+    await throwsCloud(completeLogin(s.deps, null, { state: stateOf(url2), browserState: stateOf(url2), code: s.companyIdp.issueCode(url2, "acme-client", { email: "erin@acme.com" }), error: null }), "unauthenticated", /invalid_client/);
   } finally {
     s.h.cleanup();
   }
@@ -319,6 +319,26 @@ test("the stored SSO secret cannot be read with a different server secret (rotat
     await configureSso(s);
     const rotated = { ...s.deps, secret: "a-completely-different-server-secret-value" };
     await throwsCloud(beginSsoLogin(rotated, "acme", "/"), "unavailable", /save the SSO settings again/);
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("ATTACK (login CSRF): a callback finished in a browser that did not start the sign-in is refused, and does not burn the real one", async () => {
+  const s = setup();
+  try {
+    // The attacker starts a sign-in in THEIR browser and gets as far as the callback link, but does not open it.
+    const url = await beginPlatformLogin(s.deps, PLATFORM, "/o/acme");
+    const code = s.platformIdp.issueCode(url, PLATFORM.clientId, { email: "attacker@example.com", subject: "attacker-sub" });
+    const state = stateOf(url);
+    // The victim's browser has no login cookie, or one for some other attempt:
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state, code, error: null, browserState: null }), "unauthenticated", /not started in this browser/);
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state, code, error: null, browserState: "" }), "unauthenticated", /not started in this browser/);
+    await throwsCloud(completeLogin(s.deps, PLATFORM, { state, code, error: null, browserState: "some-other-attempt" }), "unauthenticated", /not started in this browser/);
+    assert.equal(s.h.control.db.prepare("SELECT COUNT(*) AS n FROM web_sessions").get()!["n"], 0, "no session was created for the victim");
+    // The attacker's own browser (which holds the cookie) can still finish: refusing the victim did not consume the attempt.
+    const ok = await completeLogin(s.deps, PLATFORM, { state, code, error: null, browserState: state });
+    assert.equal(ok.user.email, "attacker@example.com");
   } finally {
     s.h.cleanup();
   }

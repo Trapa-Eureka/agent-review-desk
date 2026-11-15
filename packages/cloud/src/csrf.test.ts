@@ -30,6 +30,14 @@ test("without Sec-Fetch-Site (non-browser clients) Origin must match our address
   }
 });
 
+test("ATTACK: Sec-Fetch-Site looking fine does not excuse a foreign Origin", () => {
+  for (const site of ["same-origin", "none"]) {
+    for (const origin of ["https://evil.example", "https://cloud.example.com.evil.example", "http://cloud.example.com"]) {
+      assert.equal(isSameOriginRequest(headers({ "sec-fetch-site": site, origin }), SITE), false, `${site} + ${origin}`);
+    }
+  }
+});
+
 test("a request with neither header is refused", () => {
   assert.equal(isSameOriginRequest(headers({}), SITE), false);
 });

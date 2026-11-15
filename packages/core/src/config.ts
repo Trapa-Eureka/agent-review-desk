@@ -8,6 +8,7 @@ import { DEFAULT_RULES, type PolicyAction } from "./policy.js";
  *
  *   {
  *     "approvals": true,                    // block risky actions until a human approves them
+ *     "screenshots": true,                  // keep pictures found in tool results (opt-in: pictures cannot be redacted)
  *     "timeoutSeconds": 300,                // how long a blocked call waits before it is denied
  *     "rules": { "git-force-push": "deny", "package-publish": "allow" }
  *   }
@@ -19,6 +20,8 @@ export const MAX_TIMEOUT_SECONDS = 3600;
 
 export interface ArdConfig {
   approvals: boolean;
+  /** Keep images found in tool results (browser screenshots). Off by default: unlike text, a picture cannot be redacted. */
+  screenshots: boolean;
   timeoutSeconds: number;
   rules: Record<string, PolicyAction>;
   /** Problems found in the file. A broken config never crashes a hook: it falls back to defaults and says why. */
@@ -32,7 +35,7 @@ export function configPath(root: string): string {
 }
 
 export function defaultConfig(): ArdConfig {
-  return { approvals: false, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, rules: {}, warnings: [] };
+  return { approvals: false, screenshots: false, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, rules: {}, warnings: [] };
 }
 
 export function loadConfig(root: string): ArdConfig {
@@ -58,6 +61,11 @@ export function loadConfig(root: string): ArdConfig {
     else config.warnings.push(`"approvals" must be true or false; approvals are OFF.`);
   }
 
+  if (raw.screenshots !== undefined) {
+    if (typeof raw.screenshots === "boolean") config.screenshots = raw.screenshots;
+    else config.warnings.push(`"screenshots" must be true or false; screenshots are OFF.`);
+  }
+
   if (raw.timeoutSeconds !== undefined) {
     const t = raw.timeoutSeconds;
     if (typeof t === "number" && Number.isFinite(t) && t >= MIN_TIMEOUT_SECONDS && t <= MAX_TIMEOUT_SECONDS) config.timeoutSeconds = Math.floor(t);
@@ -80,7 +88,8 @@ export function loadConfig(root: string): ArdConfig {
 }
 
 /** Set `approvals` in the config file, keeping everything else in it. Refuses to touch a file it cannot parse. */
-export function setApprovals(root: string, enabled: boolean): { path: string; created: boolean; changed: boolean } {
+/** Set one true/false switch in ard.config.json, creating the file if needed. Never overwrites a file it cannot parse. */
+function setFlag(root: string, key: "approvals" | "screenshots", enabled: boolean): { path: string; created: boolean; changed: boolean } {
   const path = configPath(root);
   const existed = existsSync(path);
   let data: Record<string, unknown> = {};
@@ -97,8 +106,11 @@ export function setApprovals(root: string, enabled: boolean): { path: string; cr
       data = parsed as Record<string, unknown>;
     }
   }
-  if (data.approvals === enabled) return { path, created: false, changed: false };
-  data.approvals = enabled;
+  if (data[key] === enabled) return { path, created: false, changed: false };
+  data[key] = enabled;
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
   return { path, created: !existed, changed: true };
 }
+
+export const setApprovals = (root: string, enabled: boolean) => setFlag(root, "approvals", enabled);
+export const setScreenshots = (root: string, enabled: boolean) => setFlag(root, "screenshots", enabled);

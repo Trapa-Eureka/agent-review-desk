@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DodoProvider, PaddleProvider, headerBag, signDodoWebhook, signPaddleWebhook, type BillingProvider, type ProviderId } from "@ard/billing";
 import { dodoPaymentEvent, dodoSubscriptionEvent, paddleOtherEvent, paddleSubscriptionEvent, stubFetch } from "@ard/billing/testkit";
 import { orgEntitlement } from "./auth.js";
-import { applyBillingEvent, openBillingPortal, startCheckout } from "./billing-service.js";
+import { applyBillingEvent, openBillingPortal, startCheckout, webhookHttpStatus } from "./billing-service.js";
 import { CloudError } from "./errors.js";
 import { makeHarness } from "./testkit.js";
 
@@ -312,4 +312,72 @@ test("no portal without a subscription, or when its provider is not configured h
   } finally {
     s.h.cleanup();
   }
+});
+
+// ------------------------------------------- a replaced subscription must not switch the new one off
+
+test("a late 'canceled' for an OLD, replaced subscription does not switch off the new paid one", async () => {
+  const s = setup();
+  try {
+    // Subscription A, scheduled to cancel at period end: the owner may start a new checkout.
+    const a = await startPaddle(s);
+    s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_a1", nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status: "active", occurredAt: "2026-11-15T10:00:00.000000Z", scheduledChange: { action: "cancel", effective_at: "2026-12-15T10:00:00.000000Z", resume_at: null } }));
+    const b = await startPaddle(s); // checkout 2
+    assert.equal(s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_b1", nonce: b.nonce, transactionId: "txn_b", subscriptionId: "sub_B", status: "active", occurredAt: "2026-11-16T10:00:00.000000Z" })).status, "applied");
+    assert.equal(s.h.control.getOrg(s.org.id)!.billingSubscriptionId, "sub_B");
+
+    // A's cancellation arrives late. It is NEWER than B's activation, so the per-organization clock alone would accept it.
+    const late = s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_a2", nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status: "canceled", occurredAt: "2026-11-17T10:00:00.000000Z" }));
+    assert.equal(late.status, "stale");
+    const org = s.h.control.getOrg(s.org.id)!;
+    assert.equal(org.billingSubscriptionId, "sub_B");
+    assert.equal(org.subStatus, "active");
+    assert.equal(orgEntitlement(org, s.h.clock.now()).active, true, "the team that pays for B keeps access");
+
+    // The same for any other non-live status from the old subscription.
+    for (const status of ["past_due", "paused"]) {
+      assert.equal(s.viaPaddle(paddleSubscriptionEvent({ eventId: `evt_a_${status}`, nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status, occurredAt: "2026-11-18T10:00:00.000000Z" })).status, "stale", status);
+    }
+    assert.equal(s.h.control.getOrg(s.org.id)!.subStatus, "active");
+
+    // B's own later events still apply normally.
+    assert.equal(s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_b2", nonce: b.nonce, transactionId: "txn_b", subscriptionId: "sub_B", status: "past_due", occurredAt: "2026-11-19T10:00:00.000000Z" })).status, "applied");
+    assert.equal(s.h.control.getOrg(s.org.id)!.subStatus, "past_due");
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("a different subscription may take over when the one on record has ended", async () => {
+  const s = setup();
+  try {
+    const a = await startPaddle(s);
+    s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_a1", nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status: "canceled", occurredAt: "2026-11-15T10:00:00.000000Z" }));
+    const b = await startPaddle(s);
+    // Even a non-active first event for B is recorded, because nothing live is on record.
+    assert.equal(s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_b1", nonce: b.nonce, transactionId: "txn_b", subscriptionId: "sub_B", status: "past_due", occurredAt: "2026-11-16T10:00:00.000000Z" })).status, "applied");
+    assert.equal(s.h.control.getOrg(s.org.id)!.billingSubscriptionId, "sub_B");
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("switching provider: a late cancellation from the old provider does not touch the new subscription", async () => {
+  const s = setup();
+  try {
+    const a = await startPaddle(s);
+    s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_a1", nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status: "active", occurredAt: "2026-11-15T10:00:00.000000Z", scheduledChange: { action: "cancel", effective_at: "2026-12-15T10:00:00.000000Z", resume_at: null } }));
+    const d = await startDodo(s);
+    assert.equal(s.viaDodo(dodoSubscriptionEvent({ nonce: d.nonce, subscriptionId: "sub_dodo", status: "active", type: "subscription.active", timestamp: "2026-11-16T10:00:00.000Z" })).status, "applied");
+    assert.equal(s.h.control.getOrg(s.org.id)!.billingProvider, "dodo");
+    assert.equal(s.viaPaddle(paddleSubscriptionEvent({ eventId: "evt_a2", nonce: a.nonce, transactionId: a.transactionId, subscriptionId: "sub_A", status: "canceled", occurredAt: "2026-11-17T10:00:00.000000Z" })).status, "stale");
+    assert.equal(s.h.control.getOrg(s.org.id)!.subStatus, "active");
+  } finally {
+    s.h.cleanup();
+  }
+});
+
+test("webhookHttpStatus: only a conflict is not acknowledged as success", () => {
+  for (const status of ["applied", "stale", "duplicate", "ignored", "unmatched"] as const) assert.equal(webhookHttpStatus({ status, orgId: "x" } as never), 200, status);
+  assert.equal(webhookHttpStatus({ status: "conflict" }), 409);
 });

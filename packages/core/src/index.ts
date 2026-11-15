@@ -28,3 +28,4 @@ export function openProject(root: string, env: NodeJS.ProcessEnv = process.env):
   repo.ingest(eventsPath);
   return { repo, eventsPath };
 }
+export * from "./screenshots.js";

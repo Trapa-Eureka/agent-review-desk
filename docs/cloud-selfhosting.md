@@ -38,8 +38,11 @@ run with insecure combinations (plain-http public URL, dev login on a real host)
 See `apps/cloud/.env.example`: every variable is documented there. The essentials are `ARD_CLOUD_SECRET`,
 `ARD_CLOUD_BASE_URL`, `ARD_CLOUD_DATA_DIR`, the `ARD_CLOUD_LOGIN_*` provider, and the `ARD_PADDLE_*` / `ARD_DODO_*` groups.
 
-Behind a reverse proxy set `ARD_CLOUD_TRUST_PROXY=1` so rate limits count real client addresses. Without it every client
-shares one bucket (safe, but one noisy client can limit everyone).
+Behind a reverse proxy set `ARD_CLOUD_TRUST_PROXY=1` (the number of proxy hops; `2` for a CDN plus a proxy) so rate limits
+count real client addresses. The address is read from the **right** end of `X-Forwarded-For`, where your own proxy
+appended it: whatever the client wrote further left is ignored, so it cannot choose its own rate-limit key. Without the
+setting the header is ignored and every client shares one bucket (safe against spoofing, but one noisy client can use up
+everyone's sign-in allowance). Never set it when no proxy is in front.
 
 ## 4. Sign-in
 
@@ -289,7 +292,7 @@ Owners click **Pay with Paddle / Dodo Payments** on the Billing page. The server
 random value that the provider returns in its subscription webhooks; **that value, never an id taken from the webhook
 body, is what ties a payment to an organization.** Webhooks are verified against the exact bytes received (Paddle:
 HMAC-SHA256 of `ts:body`; Dodo: Standard Webhooks), are idempotent (redelivery changes nothing), and tolerate out-of-order
-delivery (an older event never overwrites a newer one). Anything not signed correctly gets 400 and changes nothing.
+delivery (an older event never overwrites a newer one). Anything not signed correctly gets 400 and changes nothing. A subscription that two organizations both claim is answered **409** (a failed delivery in the provider's dashboard) and written to the audit log, so someone looks at it. A late event about an **old, replaced** subscription never switches off the one the team now pays for.
 
 Access rules: `active` / `trialing` = paid features on; a failed payment keeps access for **7 days** from the first
 failure; a cancelled subscription keeps access until the paid period ends; paused or never-completed = off. When access
@@ -321,11 +324,17 @@ Refunds, chargebacks and plan changes are handled in the provider's dashboard an
 ## 8. Security model in short
 
 - Sessions: random ids stored only as hashes; `HttpOnly`, `SameSite=Lax`, `Secure` (and `__Host-` prefixed) over https.
-- State-changing requests must come from this site (`Sec-Fetch-Site`, with `Origin` as fallback).
+- State-changing requests must come from this site: `Sec-Fetch-Site` must say so **and** any `Origin` must match (with `Origin` alone as the
+  fallback for non-browser clients).
+- Signing in is bound to the browser that started it (a short-lived cookie holding the sign-in `state`), so a callback link
+  cannot be used to sign someone else's browser in to an attacker's account (login CSRF).
+- The page headers deliberately have no `form-action` directive: Chrome applies it to the redirect after a form post, and sign-in,
+  SSO and checkout are form posts answered by a redirect to another site.
 - API tokens (`ard_...`) are random, stored hashed, shown once, revocable, and checked against organization membership on
   every request.
-- The server fetches URLs that customers type (an SSO issuer). It refuses non-https, internal and loopback addresses,
-  redirects and oversized responses, and checks what a host name resolves to.
+- The server fetches URLs that customers type (an SSO issuer). It refuses non-https, redirects, oversized responses, and any
+  address that is not public (for IPv6 only global unicast is allowed, which also excludes every spelling of a mapped IPv4
+  address), and it then connects to the address it checked rather than resolving the name again (no DNS rebinding).
 - ID tokens must be signed with RS256 or ES256 by the provider's published keys; `none` and HMAC algorithms are refused.
 - Every organization's sessions live in their **own SQLite file**, so no query can cross organizations.
 - A session belongs to the member who first uploaded it; whole-session review decisions cannot be uploaded; uploaded text

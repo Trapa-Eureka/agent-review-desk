@@ -21,6 +21,7 @@ export const EVENT_TYPES = [
   "command",
   "file_change",
   "approval",
+  "screenshot",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -140,10 +141,34 @@ export interface ApprovalEvent extends BaseEvent {
   ruleIds?: string[];
 }
 
+/** Image formats a screenshot may have. Detected from the file's first bytes, never from a name or a claim. SVG is excluded on purpose (it can carry script). */
+export const SCREENSHOT_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export type ScreenshotMediaType = (typeof SCREENSHOT_MEDIA_TYPES)[number];
+
+/**
+ * A picture the agent saw or did (e.g. a browser screenshot). The image itself is NOT in the log: it lives in
+ * `.ard/screenshots/<imageId>`, content-addressed by its SHA-256, and this event points at it.
+ * Unlike text, a picture cannot be redacted: it may show anything that was on the screen. Recording is therefore
+ * opt-in, and screenshots are never uploaded by `ard sync`.
+ */
+export interface ScreenshotEvent extends BaseEvent {
+  type: "screenshot";
+  /** Lowercase hex SHA-256 of the image bytes, which is also its file name. */
+  imageId: string;
+  mediaType: ScreenshotMediaType;
+  bytes: number;
+  /** "hook": taken from a tool result; "manual": attached with `ard screenshot`. */
+  source: "hook" | "manual";
+  toolName?: string;
+  toolUseId?: string;
+  caption?: string;
+}
+
 export type ArdEvent =
   | SessionStartEvent
   | SessionEndEvent
   | ToolUseEvent
   | CommandEvent
   | FileChangeEvent
-  | ApprovalEvent;
+  | ApprovalEvent
+  | ScreenshotEvent;

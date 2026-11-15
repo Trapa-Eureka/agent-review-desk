@@ -5,6 +5,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateEvent, type ArdEvent } from "@ard/schema";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { eventsFromClaudePayload, recordClaudeHook, type ClaudeHookPayload } from "./hook.js";
 import { cleanEnv, fake, makeFakeProject, readEvents } from "@ard/core/testutil";
 
@@ -211,6 +212,94 @@ test("`ard hook` NEVER exits non-zero, even on garbage, a wrong agent or a missi
       const result = spawnSync(process.execPath, [INDEX, ...args], { input, cwd: project.dir, env, encoding: "utf8" });
       assert.equal(result.status, 0, `args=${args.join(" ")} input=${JSON.stringify(input)} -> ${result.status}: ${result.stderr}`);
     }
+  } finally {
+    project.cleanup();
+  }
+});
+
+// ----------------------------------------------------------------- pictures in tool results
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 9)]);
+const shotPayload = (dir: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    session_id: "s-shot",
+    cwd: dir,
+    hook_event_name: "PostToolUse",
+    tool_name: "mcp__claude-in-chrome__computer",
+    tool_use_id: "toolu_shot",
+    tool_input: { action: "screenshot" },
+    tool_response: { content: [{ type: "text", text: "ok" }, { type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] },
+    ...extra,
+  });
+
+test("a picture in a tool result is NEVER written into the log as text, whether or not screenshots are kept", () => {
+  const [post] = ofType(map({ hook_event_name: "PostToolUse", tool_name: "mcp__x__shot", tool_response: { content: [{ type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] } }), "tool_use");
+  const text = JSON.stringify(post);
+  assert.equal(text.includes(PNG.toString("base64")), false);
+  assert.match(text, /omitted/);
+});
+
+test("screenshots are OFF by default: the picture is dropped, no file is written, no screenshot event", () => {
+  const project = makeFakeProject();
+  try {
+    const env = cleanEnv({ CLAUDE_PROJECT_DIR: project.dir });
+    recordClaudeHook(shotPayload(project.dir), env);
+    const events = readEvents(project.dir);
+    assert.equal(ofType(events, "screenshot").length, 0);
+    assert.equal(existsSync(join(project.dir, ".ard", "screenshots")), false);
+    assert.equal(JSON.stringify(events).includes(PNG.toString("base64")), false);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("with \"screenshots\": true the picture is kept under its hash and a screenshot event points at it", () => {
+  const project = makeFakeProject();
+  try {
+    writeFileSync(join(project.dir, "ard.config.json"), JSON.stringify({ screenshots: true }));
+    const env = cleanEnv({ CLAUDE_PROJECT_DIR: project.dir });
+    recordClaudeHook(shotPayload(project.dir), env);
+    recordClaudeHook(shotPayload(project.dir), env); // the same picture again
+    const shots = ofType(readEvents(project.dir), "screenshot");
+    assert.equal(shots.length, 2, "two events");
+    const [first] = shots;
+    assert.deepEqual({ type: first!.type, source: first!.source, mediaType: first!.mediaType, bytes: first!.bytes, toolName: first!.toolName, toolUseId: first!.toolUseId, session: first!.sessionId }, { type: "screenshot", source: "hook", mediaType: "image/png", bytes: PNG.length, toolName: "mcp__claude-in-chrome__computer", toolUseId: "toolu_shot", session: "s-shot" });
+    assert.equal(validateEvent(first).ok, true);
+    assert.deepEqual(readdirSync(join(project.dir, ".ard", "screenshots")), [first!.imageId], "the same picture is stored once");
+    assert.equal(statSync(join(project.dir, ".ard", "screenshots", first!.imageId)).mode & 0o077, 0, "owner-only");
+    assert.equal(JSON.stringify(readEvents(project.dir)).includes(PNG.toString("base64")), false);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("a block that claims to be an image but is not (SVG) is never kept, even with screenshots on", () => {
+  const project = makeFakeProject();
+  try {
+    writeFileSync(join(project.dir, "ard.config.json"), JSON.stringify({ screenshots: true }));
+    const env = cleanEnv({ CLAUDE_PROJECT_DIR: project.dir });
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    recordClaudeHook(shotPayload(project.dir, { tool_response: { content: [{ type: "image", data: svg.toString("base64"), mimeType: "image/png" }] } }), env);
+    assert.equal(ofType(readEvents(project.dir), "screenshot").length, 0);
+    assert.equal(existsSync(join(project.dir, ".ard", "screenshots")), false);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("a broken config or an unwritable screenshots folder never stops the other events from being recorded", () => {
+  const project = makeFakeProject();
+  try {
+    writeFileSync(join(project.dir, "ard.config.json"), "{ not json");
+    const env = cleanEnv({ CLAUDE_PROJECT_DIR: project.dir });
+    assert.doesNotThrow(() => recordClaudeHook(shotPayload(project.dir), env));
+    assert.equal(ofType(readEvents(project.dir), "tool_use").length, 1, "the tool call itself is still recorded");
+    // A file where the folder should be: saving fails, recording must not.
+    writeFileSync(join(project.dir, "ard.config.json"), JSON.stringify({ screenshots: true }));
+    writeFileSync(join(project.dir, ".ard", "screenshots"), "i am a file");
+    assert.doesNotThrow(() => recordClaudeHook(shotPayload(project.dir), env));
+    assert.equal(ofType(readEvents(project.dir), "tool_use").length, 2);
+    assert.equal(ofType(readEvents(project.dir), "screenshot").length, 0);
   } finally {
     project.cleanup();
   }

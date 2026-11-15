@@ -1,6 +1,7 @@
 import {
   EVENT_TYPES,
   SCHEMA_VERSION,
+  SCREENSHOT_MEDIA_TYPES,
   type ArdEvent,
   type EventType,
   type FileOperation,
@@ -95,6 +96,16 @@ function validateByType(o: Record<string, unknown>): string | null {
         optional(o, "newText", isString, "a string"),
         optional(o, "patch", isString, "a string"),
         optional(o, "truncated", isBool, "a boolean"),
+      );
+    case "screenshot":
+      return firstError(
+        typeof o.imageId === "string" && /^[0-9a-f]{64}$/.test(o.imageId) ? null : `"imageId" must be a 64-character lowercase hex SHA-256`,
+        SCREENSHOT_MEDIA_TYPES.includes(o.mediaType as (typeof SCREENSHOT_MEDIA_TYPES)[number]) ? null : `"mediaType" must be one of ${SCREENSHOT_MEDIA_TYPES.join(", ")}`,
+        typeof o.bytes === "number" && Number.isInteger(o.bytes) && o.bytes > 0 ? null : `"bytes" must be a positive whole number`,
+        o.source === "hook" || o.source === "manual" ? null : `"source" must be "hook" or "manual"`,
+        optional(o, "toolName", isString, "a string"),
+        optional(o, "toolUseId", isString, "a string"),
+        optional(o, "caption", isString, "a string"),
       );
     case "approval":
       return firstError(

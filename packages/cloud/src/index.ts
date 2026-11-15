@@ -4,6 +4,7 @@ export * from "./billing-service.js";
 export * from "./config.js";
 export * from "./control.js";
 export * from "./crypto.js";
+export * from "./clientip.js";
 export * from "./csrf.js";
 export * from "./errors.js";
 export * from "./limits.js";

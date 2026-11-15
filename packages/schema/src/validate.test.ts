@@ -22,6 +22,8 @@ const samples: ArdEvent[] = [
   { ...base, type: "file_change", path: "src/b.ts", operation: "create", patch: "+x" },
   { ...base, type: "approval", targetEventId: "e1", decision: "approved", decidedBy: "me" },
   { ...base, type: "approval", targetSessionId: "s1", decision: "rejected", note: "too risky", requestId: "r1", ruleIds: ["git-force-push"] },
+  { ...base, type: "screenshot", imageId: "a".repeat(64), mediaType: "image/png", bytes: 1234, source: "hook", toolName: "mcp__x__computer", toolUseId: "t9", caption: "login page" },
+  { ...base, type: "screenshot", imageId: "0123456789abcdef".repeat(4), mediaType: "image/webp", bytes: 1, source: "manual" },
 ];
 
 test("every sample event type validates", () => {
@@ -80,4 +82,21 @@ test("parseJsonl returns valid events and reports bad lines without throwing", (
   const { events, errors } = parseJsonl(text);
   assert.equal(events.length, 2);
   assert.deepEqual(errors.map((e) => e.line), [2, 4]);
+});
+
+test("a screenshot event must point at a hex SHA-256 file name, never at a path", () => {
+  const good = { ...base, type: "screenshot", imageId: "a".repeat(64), mediaType: "image/png", bytes: 10, source: "manual" };
+  assert.equal(validateEvent(good).ok, true);
+  for (const imageId of ["../../etc/passwd", "a".repeat(63), "a".repeat(65), "A".repeat(64), "a".repeat(63) + "/", "", 5, null]) {
+    assert.equal(validateEvent({ ...good, imageId }).ok, false, String(imageId));
+  }
+});
+
+test("a screenshot event only allows raster image types (no SVG, which can carry script)", () => {
+  const good = { ...base, type: "screenshot", imageId: "b".repeat(64), mediaType: "image/png", bytes: 10, source: "hook" };
+  for (const mediaType of ["image/svg+xml", "text/html", "application/pdf", "image/PNG", "", undefined]) {
+    assert.equal(validateEvent({ ...good, mediaType }).ok, false, String(mediaType));
+  }
+  for (const bytes of [0, -1, 1.5, "10", null, Number.NaN]) assert.equal(validateEvent({ ...good, bytes }).ok, false, String(bytes));
+  for (const source of ["tool", "", undefined]) assert.equal(validateEvent({ ...good, source }).ok, false, String(source));
 });
