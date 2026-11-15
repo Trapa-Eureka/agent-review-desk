@@ -11,6 +11,7 @@ Free tier is local (SQLite, self-hosted); team collaboration and audit logs are 
 
 ## Commands
 - `pnpm install` · `pnpm build` · `pnpm typecheck`
+- `pnpm test` — schema + CLI tests (compiled to `dist/`, run with `node --test`)
 - `pnpm test:hooks` — unit tests for the blocking hook (always run after changing its rules)
 - `pnpm dev:web` — dashboard dev server
 
@@ -20,6 +21,13 @@ Free tier is local (SQLite, self-hosted); team collaboration and audit logs are 
 - The DB is SQLite behind a single repository layer, so it can be swapped for Postgres in the cloud tier.
 - Payment happens on the web only. The CLI runs `ard login` and reads the plan. The free/paid boundary is drawn by server-side features.
 - Never send a user's API key to our servers. If one is needed, use the OS keychain or environment variables (BYOK).
+
+## Invariants (tested; do not break)
+- `ard hook` always exits 0. Exit code 2 makes Claude Code block the tool call, and a recorder must never break the agent.
+- Everything is redacted and size-capped (`packages/cli/src/redact.ts`) before it is written to `.ard/events.jsonl`. The token patterns there mirror `.claude/hooks/block-dangerous.mjs`; keep them in sync.
+- `ard init` never overwrites a settings file it cannot parse, never touches the user's own hooks, and is idempotent.
+- `ard run` never records ard's own data folder as an agent change, and only attributes changes made during the run.
+- Adding an optional event field keeps schema `v: 1`; renaming or removing one bumps `SCHEMA_VERSION`.
 
 ## Rules
 - Never commit user data (`.ard/`, `*.db`, `*.jsonl`) or secrets (`.env`, keys, tokens). Check `.gitignore` first.

@@ -2,8 +2,8 @@
 
 A workspace that records what AI coding agents (Claude Code, Codex) do on your machine, so a human can review the diffs and commands and **approve or reject** them.
 
-> **Status: early development (Phase 0 complete).**
-> The repository skeleton, the safety hook and the build pipeline are done. The recorder, the review UI and the paid cloud tier are **planned, not yet implemented**. Everything marked _(planned)_ below describes the intended behavior.
+> **Status: early development (Phase 1 complete).**
+> The recorder works: you can capture Claude Code sessions with hooks (`ard init`) or record any agent with the process wrapper (`ard run`). The review UI, approve/reject and the paid cloud tier are **planned, not yet implemented**. Everything marked _(planned)_ below describes the intended behavior.
 
 ## Overview
 
@@ -23,21 +23,22 @@ It is built for development teams and agencies that use AI agents and need an au
 |---|---|
 | pnpm monorepo (`packages/schema`, `packages/cli`, `apps/web`) | Done |
 | Dev-time hook that blocks dangerous actions (see [Safety hook](#safety-hook)) | Done |
-| JSONL event schema | Planned (Phase 1) |
-| `ard init` — registers agent hooks in your project | Planned (Phase 1) |
-| `ard hook` — records tool-use events from Claude Code hooks | Planned (Phase 1) |
-| `ard run -- <agent>` — wrapper for agents without hooks (e.g. Codex) | Planned (Phase 1) |
+| JSONL event schema with validation (`@ard/schema`) | Done |
+| `ard init` — registers Claude Code hooks in your project | Done |
+| `ard hook` — records session, tool-use, command and file-change events from Claude Code hooks | Done |
+| `ard run -- <agent>` — process wrapper for any agent (e.g. Codex): records the session and the files it changed, via git | Done |
+| Redaction of API keys/tokens and size caps on everything written to the log | Done |
 | Review UI: session list, timeline, diff viewer, command log | Planned (Phase 2) |
 | Approve / reject, including pre-approval of risky actions | Planned (Phase 2) |
 | Default policy pack (block secret writes, destructive deletes) | Planned (Phase 2) |
 | `ard login`, cloud sync, team workspace | Planned (Phase 3) |
 | Role-based approval, policy engine, retention, SSO | Planned (Phase 3) |
 
-### How it will work _(planned)_
+### How it works
 
-- **Capture**: agent hooks (`PreToolUse` / `PostToolUse`) are the primary source of events. The `ard run` wrapper is a fallback for agents that have no hooks.
-- **Approve**: for risky actions the hook blocks (exit code 2) until you approve in the web UI.
-- **Store**: events go to a local SQLite database on **your own machine**. Nothing leaves your computer on the free tier.
+- **Capture** _(done)_: Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SessionEnd`) are the primary source of events. The `ard run` wrapper is a fallback for agents that have no hooks.
+- **Store** _(done for JSONL)_: events are appended to `.ard/events.jsonl` in your project, on **your own machine**. Nothing leaves your computer on the free tier. A local SQLite database for the review UI comes in Phase 2 _(planned)_.
+- **Approve** _(planned)_: for risky actions the hook will block (exit code 2) until you approve in the web UI.
 - **Your API keys stay yours**: the recorder wraps the agent CLI you already use and logged in to. It does not need your Anthropic/OpenAI API key. If a future feature needs one (for example AI summaries), it will be bring-your-own-key, stored in the OS keychain and never sent to our servers.
 
 ## Requirements
@@ -57,6 +58,12 @@ pnpm install
 pnpm build
 ```
 
+Until the CLI is published, run it from the build output. For convenience, add an alias (adjust the path):
+
+```bash
+alias ard='node /path/to/agent-review-desk/packages/cli/dist/index.js'
+```
+
 After the first release _(planned)_ you will be able to install the CLI with:
 
 ```bash
@@ -65,32 +72,72 @@ npm install -g agent-review-desk
 
 ## Running
 
-### What works today
+### Record a Claude Code session (hooks)
 
 ```bash
-# Build everything and type-check
-pnpm build
-pnpm typecheck
-
-# Run the unit tests for the safety hook
-pnpm test:hooks
-
-# Start the dashboard (currently a placeholder page) at http://localhost:3000
-pnpm dev:web
-
-# Run the CLI (currently only prints help)
-node packages/cli/dist/index.js --help
+cd your-project
+ard init                 # registers the hooks and creates .ard/
+# restart Claude Code (or open /hooks) so it picks up the new hooks
 ```
 
-### Intended usage _(planned)_
+From now on every session, tool call, shell command and file edit Claude Code makes in that project is appended to `.ard/events.jsonl`.
+
+- `ard init` writes to `.claude/settings.local.json` (personal, git-ignored, pins absolute paths to this node and CLI). Use `ard init --shared` to write the committed `.claude/settings.json` instead; that variant calls plain `ard` and needs it on your `PATH`.
+- Do not register in both files: Claude Code runs hooks from every settings file, so events would be recorded twice. `ard init` warns you if that happens.
+- `ard init` adds `.ard/` to `.gitignore`. It never overwrites a settings file it cannot parse, and it leaves your own hooks untouched.
+- `ard init --remove` takes ard's hooks out again. Your recordings in `.ard/` are kept.
+
+### Record any agent (wrapper)
 
 ```bash
-ard init                 # register hooks in the current project
-ard run -- claude        # or: ard run -- codex   (wrapper mode)
+ard run -- claude        # or: ard run -- codex
+```
+
+The wrapper runs the program with your terminal attached and records the session plus the files it changed, found by comparing the git working tree before and after. Exit codes and Ctrl-C behave as if you ran the program directly.
+
+| | Hooks (`ard init`) | Wrapper (`ard run`) |
+|---|---|---|
+| Works with | Claude Code | any program |
+| Sees commands and their output | Yes | No |
+| Sees individual tool calls | Yes | No |
+| Sees file edits | Yes (edited text) | Yes (git diff) |
+| Sees changes to git-ignored files such as `.env` | Yes | **No** |
+| Needs git | No | For file changes |
+
+Both can be active at once; hook events are linked to the wrapper session through `wrapperSessionId`.
+
+### Develop this repository
+
+```bash
+pnpm build               # build all packages
+pnpm typecheck
+pnpm test                # schema + CLI tests
+pnpm test:hooks          # tests for the dev-time safety hook
+pnpm dev:web             # dashboard placeholder at http://localhost:3000
+ard --help
+```
+
+### Not yet available _(planned)_
+
+```bash
 ard login                # sign in to the cloud workspace (paid tier)
 ```
 
-Events are written to `.ard/events.jsonl` and the local database to `.ard/data.db` inside your project. These are git-ignored by default.
+## Event log
+
+`.ard/events.jsonl` holds one JSON object per line (schema version 1, defined in `packages/schema`). Event types: `session_start`, `session_end`, `tool_use` (before/after each tool call), `command`, `file_change`, `approval` (written by the review UI in Phase 2).
+
+Before anything is written, it is **redacted and size-capped**: API keys, tokens, private keys, `KEY=value` style secrets and values under secret-looking names are replaced with `[REDACTED]`; long output and file text are cut with a marker. The folder is created owner-only (`0700`, file `0600`).
+
+Redaction is pattern-based and best effort. Treat `.ard/` as sensitive anyway and never commit it.
+
+## Known limitations
+
+- Hook capture was written against the Claude Code hooks documentation (checked November 2026). Claude Code owns that format, so re-verify after major Claude Code updates.
+- Claude Code reports no exit code for successful commands, so a recorded `exitCode: 0` means "the call succeeded". Failed commands carry the real exit code.
+- The wrapper cannot see inside the agent, cannot see git-ignored files, and cannot attribute edits to a file that was already untracked before the run.
+- `ard hook` never blocks anything yet (it always exits 0). Pre-approval comes with the review UI.
+- macOS and Linux only; Windows is untested.
 
 ## Free vs. paid _(planned)_
 
@@ -159,7 +206,7 @@ agent-review-desk/
 ## Roadmap
 
 - [x] **Phase 0** — monorepo, `CLAUDE.md`, safety hook
-- [ ] **Phase 1** — event schema, `ard init`, `ard hook`, `ard run`
+- [x] **Phase 1** — event schema, `ard init`, `ard hook`, `ard run`
 - [ ] **Phase 2** — self-hosted review UI, approve/reject, default policies
 - [ ] **Phase 3** — `ard login`, cloud sync, billing, roles, SSO
 - [ ] **Phase 4** — optional: bring-your-own-key AI summaries, multi-agent view, GitHub Action
