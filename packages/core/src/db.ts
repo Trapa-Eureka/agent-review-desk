@@ -107,13 +107,13 @@ export function transaction<T>(db: Db, fn: () => T): T {
   }
 }
 
-function migrate(db: Db): void {
+function migrate(db: Db, migrations: readonly string[]): void {
   const current = () => Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
-  if (current() >= MIGRATIONS.length) return;
+  if (current() >= migrations.length) return;
   transaction(db, () => {
     // Re-check under the write lock: another process may have migrated while we waited.
-    for (let v = current(); v < MIGRATIONS.length; v++) {
-      db.exec(MIGRATIONS[v]!);
+    for (let v = current(); v < migrations.length; v++) {
+      db.exec(migrations[v]!);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     }
   });
@@ -124,7 +124,7 @@ function migrate(db: Db): void {
  * hook processes read and write at the same time; `busy_timeout` makes writers wait instead of failing.
  * The file is created owner-only, because it holds code and command output.
  */
-export function openDb(path: string): Db {
+export function openDb(path: string, migrations: readonly string[] = MIGRATIONS): Db {
   const Ctor = loadSqlite();
   const isNew = path !== ":memory:" && !existsSync(path);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -134,6 +134,6 @@ export function openDb(path: string): Db {
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec("PRAGMA foreign_keys = ON");
   if (isNew) chmodSync(path, 0o600);
-  migrate(db);
+  migrate(db, migrations);
   return db;
 }

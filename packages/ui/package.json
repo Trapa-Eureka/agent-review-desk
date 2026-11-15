@@ -1,0 +1,29 @@
+{
+  "name": "@ard/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Review UI building blocks shared by the local app (apps/web) and the cloud workspace (apps/cloud). Shipped as source; each app compiles it (Next: transpilePackages).",
+  "exports": {
+    "./Timeline": "./src/Timeline.tsx",
+    "./DiffView": "./src/DiffView.tsx",
+    "./DecisionForm": "./src/DecisionForm.tsx",
+    "./AutoRefresh": "./src/AutoRefresh.tsx",
+    "./present": "./src/present.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "dependencies": {
+    "@ard/core": "workspace:*",
+    "@ard/schema": "workspace:*"
+  },
+  "peerDependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0"
+  }
+}

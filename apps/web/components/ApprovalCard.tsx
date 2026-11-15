@@ -1,7 +1,7 @@
 import type { ApprovalRequest } from "@ard/core";
 import Link from "next/link";
-import { clock } from "../lib/present";
-import DecisionForm from "./DecisionForm";
+import { clock } from "@ard/ui/present";
+import DecisionForm from "@ard/ui/DecisionForm";
 
 /** One action an agent is blocked on, with what it wants to do, why it was flagged, and the decision buttons. */
 export default function ApprovalCard({ request, showSessionLink = true }: { request: ApprovalRequest; showSessionLink?: boolean }) {

@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { SCHEMA_VERSION } from "@ard/schema";
+import { runLogin, runLogout, runWhoami, type AccountIo } from "./cloud/account.js";
+import { CloudHttpError, resolveServer, type CloudFetch } from "./cloud/client.js";
+import { runSync } from "./cloud/sync.js";
 import { handleClaudeHook } from "./hook.js";
 import { runInit } from "./init.js";
 import { DEFAULT_PORT, runReview } from "./review.js";
@@ -11,6 +14,10 @@ export interface Io {
   readStdin: () => Promise<string>;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Network, clock and waiting are injectable so the cloud commands can be tested without a server or real delays. */
+  fetch?: CloudFetch;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
 }
 
 export const defaultIo = (): Io => ({
@@ -24,6 +31,15 @@ export const defaultIo = (): Io => ({
   },
   cwd: process.cwd(),
   env: process.env,
+});
+
+const accountIo = (io: Io): AccountIo => ({
+  out: io.out,
+  err: io.err,
+  env: io.env,
+  fetch: io.fetch ?? (globalThis.fetch as unknown as CloudFetch),
+  sleep: io.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+  now: io.now ?? (() => new Date()),
 });
 
 function version(): string {
@@ -60,8 +76,21 @@ Usage:
       It exits 2 (block) only when approvals are on and a risky action was denied or not approved;
       every other problem exits 0 so the recorder can never break the agent.
 
+Team workspace (the paid Team plan; point ARD_CLOUD_URL at your Agent Review Desk Cloud, or pass --server):
+  ard login [--server <url>]
+      Sign in. Shows a short code and a link; you confirm in the browser (SSO and 2FA work as usual).
+  ard logout [--server <url>]
+      Revoke this machine's token and forget it.
+  ard whoami [--server <url>]
+      Who you are signed in as, your organizations and their plan.
+  ard sync [--org <slug>] [--dry-run] [--yes] [--server <url>]
+      Upload what was recorded since the last sync to your team's workspace. The first upload to an
+      organization needs --yes: it sends command output and file diffs to another computer.
+      --dry-run shows what would be sent and sends nothing.
+
 Recordings are written to .ard/events.jsonl and indexed in .ard/data.db (set ARD_DIR to use another folder).
 Project settings live in ard.config.json (committed): approvals, timeoutSeconds, per-rule overrides.
+Your login token is stored in ~/.config/ard/credentials.json (owner-only; set ARD_CONFIG_DIR to move it).
 `;
 
 function takeFlag(args: string[], flag: string): boolean {
@@ -184,6 +213,32 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         return await runWrapped({ argv: args, cwd: io.cwd, env: io.env, log: io.err });
       } catch (error) {
         io.err(`ard run: ${(error as Error).message}`);
+        return 1;
+      }
+    }
+
+    case "login":
+    case "logout":
+    case "whoami":
+    case "sync": {
+      const args = [...rest];
+      const serverFlag = takeValue(args, "--server");
+      const org = command === "sync" ? takeValue(args, "--org") : undefined;
+      const dryRun = command === "sync" ? takeFlag(args, "--dry-run") : false;
+      const yes = command === "sync" ? takeFlag(args, "--yes") : false;
+      if (args.length > 0) {
+        io.err(`ard ${command}: unknown argument: ${args.join(" ")}`);
+        return 2;
+      }
+      try {
+        const server = resolveServer(io.env, serverFlag);
+        const account = accountIo(io);
+        if (command === "login") return await runLogin(account, server);
+        if (command === "logout") return await runLogout(account, server);
+        if (command === "whoami") return await runWhoami(account, server);
+        return await runSync(account, { cwd: io.cwd, server, ...(org === undefined ? {} : { org }), yes, dryRun });
+      } catch (error) {
+        io.err(`ard ${command}: ${error instanceof CloudHttpError || error instanceof Error ? error.message : String(error)}`);
         return 1;
       }
     }

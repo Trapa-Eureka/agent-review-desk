@@ -6,8 +6,12 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 ## Layout (pnpm workspace)
 - `packages/schema` — JSONL event schema and validation (`@ard/schema`)
 - `packages/core` — SQLite repository, policy engine, approvals, config, redaction, JSONL append (`@ard/core`). Shared by the CLI and the web app.
-- `packages/cli` — the `ard` CLI: init / hook / run / review (`@ard/cli`)
+- `packages/cli` — the `ard` CLI: init / hook / run / review / login / logout / whoami / sync (`@ard/cli`)
+- `packages/billing` — Paddle and Dodo providers, webhook verification, entitlement (`@ard/billing`)
+- `packages/cloud` — accounts, orgs, roles, SSO, per-org workspaces, billing service (`@ard/cloud`)
+- `packages/ui` — review components shared by both UIs (`@ard/ui`, source-shipped via `transpilePackages`)
 - `apps/web` — Next.js review UI (`@ard/web`), started by `ard review`, never run bare
+- `apps/cloud` — Next.js team workspace (`@ard/cloud-web`); self-host guide in `docs/cloud-selfhosting.md`
 - `.claude/hooks` — dev-time blocking hook for this repo (not product code)
 
 ## Commands
@@ -31,6 +35,9 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - A decision counts only while the request is pending and unexpired (`decideApprovalRequest`); a late click must never flip or fake an outcome. An interrupted hook retires its own request.
 - Everything is redacted and size-capped (`packages/core/src/redact.ts`) before it is written to `.ard/events.jsonl` or shown in the UI. The token patterns mirror `.claude/hooks/block-dangerous.mjs`; keep them in sync. Policy shell patterns (`policy.ts`) mirror that script too.
 - The review UI can approve actions, so it stays locked down (`apps/web/middleware.ts`): 127.0.0.1 only, per-launch token cookie, Host and Origin checks, no framing. Do not add a route that skips the middleware, and do not redirect from it (Next rewrites 127.0.0.1 to localhost, which loses the cookie).
+- Cloud billing: a webhook is tied to an organization **only** through the random nonce we put in the checkout (or ids stored from it), never an id read from the webhook body. Signatures are checked on the raw bytes; events are idempotent and order-safe.
+- Cloud web: cookie-authenticated state changes go through `assertSameOrigin` (`Sec-Fetch-Site` leads; `Origin` alone breaks under `no-referrer`). Do not redirect from middleware. SSO users stay scoped to their org (`homeOrgId`), never merged with platform users. A session belongs to its first uploader; client-uploaded session reviews are dropped; the server redacts again.
+- `ard sync` uploads nothing without `--yes` on first use per org; tokens go only over https (localhost excepted).
 - `ard init` never overwrites a settings or config file it cannot parse, never touches the user's own hooks, is idempotent, and does not write any hook if the config update fails.
 - `ard run` never records ard's own data folder as an agent change, and only attributes changes made during the run.
 - Adding an optional event field keeps schema `v: 1`; renaming or removing one bumps `SCHEMA_VERSION`. SQL migrations are append-only (`MIGRATIONS` in `db.ts`).
@@ -43,4 +50,4 @@ Free tier is local (JSONL + SQLite, self-hosted); team collaboration and audit l
 - If a hook blocks an action, do not work around it; tell the user.
 - Black-box checks must assert on what matters (e.g. the redirect *host*, not just the status code); verify a check can fail before trusting it.
 - Strict rules belong in hooks, procedures in skills — not in this file. Keep this file under 200 lines.
-- All files in this repo are written in English (code, comments, docs, UI strings).
+- All files in this repo are written in English (code, comments, docs, UI strings). The one exception is an explicitly requested translation named `*.ko.md` under `docs/`; the English file stays the source of truth and must link to it.

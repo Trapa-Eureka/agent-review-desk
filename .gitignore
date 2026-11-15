@@ -34,6 +34,10 @@ screenshots/
 # Claude Code pause on risky commands. (Test it in a separate throwaway project instead.)
 /ard.config.json
 
+# Cloud server data (accounts, tokens, billing state, every organization's synced sessions). Default folder name.
+cloud-data/
+**/cloud-data/
+
 # ---------- [2] Secrets / credentials ----------
 .env
 .env.*

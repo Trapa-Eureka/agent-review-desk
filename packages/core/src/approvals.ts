@@ -31,8 +31,11 @@ export interface ApprovalEventInput {
   ruleIds?: string[];
 }
 
-/** Append an approval event to the JSONL log (the source of truth) and index it for the UI right away. */
-export function recordApprovalEvent(repo: Repository, eventsPath: string, input: ApprovalEventInput): ApprovalEvent {
+/**
+ * Append an approval event to the JSONL log (the source of truth) and index it for the UI right away.
+ * Pass `eventsPath: null` where there is no JSONL log (the cloud workspace stores events in its database only).
+ */
+export function recordApprovalEvent(repo: Repository, eventsPath: string | null, input: ApprovalEventInput): ApprovalEvent {
   const event: ApprovalEvent = {
     ...baseFields({ sessionId: input.sessionId, agent: REVIEW_AGENT, cwd: input.cwd }),
     type: "approval",
@@ -45,7 +48,7 @@ export function recordApprovalEvent(repo: Repository, eventsPath: string, input:
   if (input.ruleIds && input.ruleIds.length > 0) event.ruleIds = input.ruleIds;
   const note = cleanNote(input.note);
   if (note) event.note = note;
-  appendEvent(eventsPath, event);
+  if (eventsPath !== null) appendEvent(eventsPath, event);
   repo.insertEvent(event);
   return event;
 }
@@ -117,7 +120,7 @@ export function decideRequest(repo: Repository, eventsPath: string, cwd: string,
 }
 
 /** A human approves or rejects a whole session after the fact. The latest decision wins. */
-export function reviewSession(repo: Repository, eventsPath: string, cwd: string, sessionId: string, decision: "approved" | "rejected", options: { by?: string; note?: string | null } = {}): ApprovalEvent | null {
+export function reviewSession(repo: Repository, eventsPath: string | null, cwd: string, sessionId: string, decision: "approved" | "rejected", options: { by?: string; note?: string | null } = {}): ApprovalEvent | null {
   if (!repo.getSession(sessionId)) return null;
   return recordApprovalEvent(repo, eventsPath, {
     sessionId,

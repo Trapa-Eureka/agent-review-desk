@@ -1,0 +1,26 @@
+{
+  "name": "@ard/cloud-web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 4780",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 4780",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ard/billing": "workspace:*",
+    "@ard/cloud": "workspace:*",
+    "@ard/core": "workspace:*",
+    "@ard/schema": "workspace:*",
+    "@ard/ui": "workspace:*",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

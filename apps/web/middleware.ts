@@ -42,17 +42,23 @@ export function middleware(request: NextRequest) {
 
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
-    const origin = request.headers.get("origin");
-    if (origin !== null) {
-      let originHost = "";
-      try {
-        originHost = new URL(origin).host;
-      } catch {
-        // malformed Origin: treated as a mismatch below
+    // Sec-Fetch-Site is set by the browser and cannot be forged by a web page, so it leads. Origin alone is not
+    // enough: with `Referrer-Policy: no-referrer` some browsers send `Origin: null` on the site's own requests.
+    const site = request.headers.get("sec-fetch-site");
+    if (site !== null) {
+      if (site !== "same-origin" && site !== "none") return deny(request, 403, "Cross-site requests are not allowed.");
+    } else {
+      const origin = request.headers.get("origin");
+      if (origin !== null) {
+        let originHost = "";
+        try {
+          originHost = new URL(origin).host;
+        } catch {
+          // malformed Origin: treated as a mismatch below
+        }
+        if (originHost !== host) return deny(request, 403, "Cross-origin requests are not allowed.");
       }
-      if (originHost !== host) return deny(request, 403, "Cross-origin requests are not allowed.");
     }
-    if (request.headers.get("sec-fetch-site") === "cross-site") return deny(request, 403, "Cross-site requests are not allowed.");
   }
 
   const given = request.nextUrl.searchParams.get("token");

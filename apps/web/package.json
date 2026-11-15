@@ -13,7 +13,8 @@
     "@ard/schema": "workspace:*",
     "next": "^15.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@ard/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

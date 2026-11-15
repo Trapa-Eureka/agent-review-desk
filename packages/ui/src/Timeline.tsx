@@ -1,6 +1,6 @@
 import type { ArdEvent, FileChangeEvent } from "@ard/schema";
 import { diffFromTexts, parseUnifiedDiff, type DiffLine } from "@ard/core";
-import { clock } from "../lib/present";
+import { clock } from "./present";
 import DiffView, { DiffStats } from "./DiffView";
 
 const MAX_OPEN_DIFF_LINES = 60;

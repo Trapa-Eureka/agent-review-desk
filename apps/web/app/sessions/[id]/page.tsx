@@ -2,10 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatDuration } from "@ard/core";
 import ApprovalCard from "../../../components/ApprovalCard";
-import AutoRefresh from "../../../components/AutoRefresh";
-import DecisionForm from "../../../components/DecisionForm";
-import Timeline from "../../../components/Timeline";
-import { dateTime, tidyPath } from "../../../lib/present";
+import AutoRefresh from "@ard/ui/AutoRefresh";
+import DecisionForm from "@ard/ui/DecisionForm";
+import Timeline from "@ard/ui/Timeline";
+import { dateTime, tidyPath } from "@ard/ui/present";
 import { withProject } from "../../../lib/server";
 
 export const dynamic = "force-dynamic";

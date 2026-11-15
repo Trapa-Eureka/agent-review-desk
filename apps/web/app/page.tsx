@@ -2,8 +2,8 @@ import Link from "next/link";
 import type { SessionSummary } from "@ard/core";
 import { formatDuration } from "@ard/core";
 import ApprovalCard from "../components/ApprovalCard";
-import AutoRefresh from "../components/AutoRefresh";
-import { dateTime, shortId, tidyPath } from "../lib/present";
+import AutoRefresh from "@ard/ui/AutoRefresh";
+import { dateTime, shortId, tidyPath } from "@ard/ui/present";
 import { withProject } from "../lib/server";
 
 export const dynamic = "force-dynamic";

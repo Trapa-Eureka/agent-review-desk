@@ -1,8 +1,8 @@
 import { Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import StripToken from "../components/StripToken";
-import { tidyPath } from "../lib/present";
-import "./globals.css";
+import { tidyPath } from "@ard/ui/present";
+import "@ard/ui/styles.css";
 
 export const metadata = {
   title: "Agent Review Desk",
