@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateEvent, type ArdEvent } from "@ard/schema";
 import { eventsFromClaudePayload, recordClaudeHook, type ClaudeHookPayload } from "./hook.js";
-import { cleanEnv, fake, makeFakeProject, readEvents } from "./testutil.js";
+import { cleanEnv, fake, makeFakeProject, readEvents } from "@ard/core/testutil";
 
 const ROOT = "/proj";
 const base = { session_id: "sess-1", cwd: ROOT };

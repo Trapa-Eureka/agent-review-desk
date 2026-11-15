@@ -4,9 +4,7 @@ import { basename, isAbsolute } from "node:path";
 import { constants as osConstants } from "node:os";
 import type { ArdEvent, FileChangeEvent } from "@ard/schema";
 import { changesSince, gitHead, takeSnapshot } from "./git.js";
-import { ardDirFor, eventsPathFor, findProjectRoot, toProjectPath } from "./paths.js";
-import { LIMITS, safeText } from "./redact.js";
-import { appendEvent, baseFields } from "./store.js";
+import { LIMITS, appendEvent, ardDirFor, baseFields, eventsPathFor, findProjectRoot, safeText, toProjectPath } from "@ard/core";
 
 export interface RunOptions {
   /** The wrapped command line, e.g. ["claude"] or ["codex", "--model", "x"]. */

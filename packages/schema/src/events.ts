@@ -119,13 +119,25 @@ export interface FileChangeEvent extends BaseEvent {
   truncated?: boolean;
 }
 
-/** A human decision on an earlier event. Written by the review UI (Phase 2). */
+/**
+ * A decision on an earlier event or on a whole session. Written by the review UI (human decisions),
+ * or by the hook itself for automatic ones (policy denial, approval timeout).
+ * Exactly one of `targetEventId` / `targetSessionId` identifies what the decision is about.
+ */
 export interface ApprovalEvent extends BaseEvent {
   type: "approval";
-  targetEventId: string;
+  /** The event decided on, e.g. the `pre` tool_use event of a call that needed approval. */
+  targetEventId?: string;
+  /** Set instead of `targetEventId` for a review decision on a whole session. */
+  targetSessionId?: string;
   decision: "approved" | "rejected";
+  /** Who decided: "reviewer" (UI), "policy" (rule denial) or "timeout" (nobody answered). */
   decidedBy?: string;
   note?: string;
+  /** The approval request this decision answers (pre-approval flow). */
+  requestId?: string;
+  /** Policy rules that triggered the request or denial. */
+  ruleIds?: string[];
 }
 
 export type ArdEvent =

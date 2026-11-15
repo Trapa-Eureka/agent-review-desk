@@ -1,7 +1,22 @@
 import type { ArdEvent, FileChangeEvent } from "@ard/schema";
-import { eventsPathFor, findProjectRoot, toProjectPath } from "./paths.js";
-import { LIMITS, safeText, sanitize } from "./redact.js";
-import { appendEvent, baseFields, type EventContext } from "./store.js";
+import {
+  LIMITS,
+  appendEvent,
+  baseFields,
+  evaluatePolicy,
+  eventsPathFor,
+  findProjectRoot,
+  loadConfig,
+  openProject,
+  recordApprovalEvent,
+  safeText,
+  sanitize,
+  summarizeCall,
+  toProjectPath,
+  waitForDecision,
+  type EventContext,
+  type WaitOptions,
+} from "@ard/core";
 
 /**
  * Claude Code hook payload (JSON on stdin). Every field is optional on purpose: the format is
@@ -172,24 +187,143 @@ export function eventsFromClaudePayload(payload: ClaudeHookPayload, root: string
   }
 }
 
+export interface Recorded {
+  payload: ClaudeHookPayload;
+  root: string;
+  events: ArdEvent[];
+}
+
 /**
- * Handle one hook invocation: parse stdin, map, append. Returns the number of events written.
- * Throws on I/O failure; the CLI wrapper turns that into a warning and exit 0, because a
+ * Parse one hook invocation and append its events to the JSONL log. Returns null when there is
+ * nothing to record. Throws on I/O failure; the caller turns that into a warning, because a
  * recorder must never break the agent it is observing.
  */
-export function recordClaudeHook(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd()): number {
+export function recordPayload(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd()): Recorded | null {
   const text = stdinText.trim();
-  if (text === "") return 0;
+  if (text === "") return null;
   const parsed: unknown = JSON.parse(text);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return 0;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
   const payload = parsed as ClaudeHookPayload;
 
   const projectDir = str(env.CLAUDE_PROJECT_DIR);
   const root = projectDir ?? findProjectRoot(str(payload.cwd) ?? fallbackCwd);
   const events = eventsFromClaudePayload(payload, root, env);
-  if (events.length === 0) return 0;
+  if (events.length === 0) return null;
 
   const path = eventsPathFor(root, env);
   for (const event of events) appendEvent(path, event);
-  return events.length;
+  return { payload, root, events };
+}
+
+/** Record only (no policy). Returns the number of events written. */
+export function recordClaudeHook(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd()): number {
+  return recordPayload(stdinText, env, fallbackCwd)?.events.length ?? 0;
+}
+
+export interface HookResult {
+  /** 0 = let the tool call proceed. 2 = block it (Claude Code shows `message` to the agent). */
+  exitCode: 0 | 2;
+  /** Why the call was blocked (exit 2), or a warning to log (exit 0). */
+  message?: string;
+}
+
+export type HookDeps = WaitOptions;
+
+const blocked = (message: string): HookResult => ({ exitCode: 2, message: `[ard] ${message} Do not retry or work around this; ask the user.` });
+
+/**
+ * The full hook: record the event, and for a PreToolUse call decide whether it may proceed.
+ *
+ * Fail-open/fail-closed, deliberately:
+ *  - Anything wrong with *recording* or with evaluating the policy -> exit 0. A recorder must never break the agent.
+ *  - A call the policy flagged as risky that cannot be approved (store unreachable) -> exit 2. Silently
+ *    letting a flagged action through because our own plumbing broke would defeat the point.
+ */
+export async function handleClaudeHook(stdinText: string, env: NodeJS.ProcessEnv = process.env, fallbackCwd: string = process.cwd(), deps: HookDeps = {}): Promise<HookResult> {
+  const recorded = recordPayload(stdinText, env, fallbackCwd);
+  if (!recorded || recorded.payload.hook_event_name !== "PreToolUse") return { exitCode: 0 };
+  const { payload, root, events } = recorded;
+
+  const config = loadConfig(root);
+  if (!config.approvals) return { exitCode: 0, ...(config.warnings.length > 0 ? { message: config.warnings.join(" ") } : {}) };
+
+  const toolInput = rec(payload.tool_input);
+  let verdict;
+  try {
+    verdict = evaluatePolicy({ toolName: str(payload.tool_name) ?? "unknown", toolInput, projectRoot: root }, config.rules);
+  } catch (error) {
+    return { exitCode: 0, message: `policy evaluation failed, allowing the call: ${(error as Error).message}` };
+  }
+  if (verdict.action === "allow") return { exitCode: 0 };
+
+  const pre = events.find((e) => e.type === "tool_use" && e.phase === "pre");
+  const sessionId = pre?.sessionId ?? "unknown-session";
+  const cwd = pre?.cwd ?? root;
+  const targetEventId = pre?.id;
+  const ruleIds = verdict.matches.map((m) => m.id);
+  const why = verdict.matches.map((m) => m.description).join("; ");
+  const eventsPath = eventsPathFor(root, env);
+
+  let repo;
+  try {
+    repo = openProject(root, env).repo;
+  } catch (error) {
+    // No database to ask a human through. Say so, record the denial in the plain log, and block.
+    const text = `could not open the approval store (${(error as Error).message}); blocking this risky action (${why}).`;
+    try {
+      appendEvent(eventsPath, { ...baseFields({ sessionId, agent: "ard-review", cwd }), type: "approval", decision: "rejected", decidedBy: "policy", ...(targetEventId ? { targetEventId } : { targetSessionId: sessionId }), ruleIds, note: text });
+    } catch {
+      // nothing more we can do
+    }
+    return blocked(text);
+  }
+
+  try {
+    if (verdict.action === "deny") {
+      recordApprovalEvent(repo, eventsPath, { sessionId, cwd, decision: "rejected", decidedBy: "policy", targetEventId, ruleIds, note: `Denied by policy: ${why}` });
+      return blocked(`Blocked by policy (${ruleIds.join(", ")}): ${why}.`);
+    }
+
+    const call = { toolName: str(payload.tool_name) ?? "unknown", toolInput, projectRoot: root };
+    const request = repo.createApprovalRequest({
+      sessionId,
+      toolUseEventId: targetEventId ?? "",
+      ...(str(payload.tool_use_id) ? { toolUseId: str(payload.tool_use_id)! } : {}),
+      toolName: call.toolName,
+      summary: summarizeCall(call),
+      input: sanitize(toolInput),
+      rules: verdict.matches.map((m) => ({ id: m.id, description: m.description })),
+      timeoutMs: config.timeoutSeconds * 1000,
+    });
+
+    // If Claude Code interrupts us while we wait, retire the request so it cannot be approved later for nothing.
+    const abandon = () => {
+      try {
+        repo.expireApprovalRequest(request.id);
+      } catch {
+        // best effort
+      }
+      process.exit(2);
+    };
+    process.once("SIGTERM", abandon);
+    process.once("SIGINT", abandon);
+    let outcome;
+    try {
+      outcome = await waitForDecision(repo, request.id, deps);
+    } finally {
+      process.off("SIGTERM", abandon);
+      process.off("SIGINT", abandon);
+    }
+
+    if (outcome.status === "approved") return { exitCode: 0 };
+    if (outcome.status === "rejected") {
+      return blocked(`A reviewer (${outcome.decidedBy ?? "unknown"}) rejected this action${outcome.note ? `: ${outcome.note}` : "."}`);
+    }
+    recordApprovalEvent(repo, eventsPath, { sessionId, cwd, decision: "rejected", decidedBy: "timeout", targetEventId, requestId: request.id, ruleIds, note: `No decision within ${config.timeoutSeconds}s.` });
+    return blocked(`Nobody approved this action within ${config.timeoutSeconds}s (${why}). Start the review UI with "ard review" and try again.`);
+  } catch (error) {
+    return blocked(`approval failed (${(error as Error).message}); blocking this risky action (${why}).`);
+  } finally {
+    repo.close();
+  }
 }

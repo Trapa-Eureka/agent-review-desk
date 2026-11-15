@@ -21,6 +21,7 @@ const samples: ArdEvent[] = [
   { ...base, type: "file_change", path: "src/a.ts", operation: "modify", oldText: "a", newText: "b" },
   { ...base, type: "file_change", path: "src/b.ts", operation: "create", patch: "+x" },
   { ...base, type: "approval", targetEventId: "e1", decision: "approved", decidedBy: "me" },
+  { ...base, type: "approval", targetSessionId: "s1", decision: "rejected", note: "too risky", requestId: "r1", ruleIds: ["git-force-push"] },
 ];
 
 test("every sample event type validates", () => {
@@ -53,6 +54,9 @@ test("rejects mistyped type-specific fields", () => {
   assert.equal(validateEvent({ ...base, type: "command", command: "ls", exitCode: "0" }).ok, false);
   assert.equal(validateEvent({ ...base, type: "file_change", path: "a", operation: "rename" }).ok, false);
   assert.equal(validateEvent({ ...base, type: "approval", targetEventId: "e", decision: "maybe" }).ok, false);
+  assert.equal(validateEvent({ ...base, type: "approval", decision: "approved" }).ok, false, "needs a target");
+  assert.equal(validateEvent({ ...base, type: "approval", targetEventId: "", decision: "approved" }).ok, false);
+  assert.equal(validateEvent({ ...base, type: "approval", targetEventId: "e", decision: "approved", ruleIds: [1] }).ok, false);
   assert.equal(validateEvent({ ...base, type: "session_start", capture: "hook", argv: [1] }).ok, false);
 });
 

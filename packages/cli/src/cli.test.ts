@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HELP, main, type Io } from "./cli.js";
-import { cleanEnv, makeFakeProject } from "./testutil.js";
+import { cleanEnv, makeFakeProject } from "@ard/core/testutil";
 
 function fakeIo(cwd: string, stdin = "", env: NodeJS.ProcessEnv = cleanEnv()) {
   const out: string[] = [];

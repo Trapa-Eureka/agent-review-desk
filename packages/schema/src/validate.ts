@@ -20,6 +20,7 @@ function optional(o: Record<string, unknown>, key: string, check: (v: unknown) =
 }
 
 const isString = (v: unknown) => typeof v === "string";
+const isNonEmptyString = (v: unknown) => typeof v === "string" && v !== "";
 const isBool = (v: unknown) => typeof v === "boolean";
 const isNumber = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 const isNumberOrNull = (v: unknown) => v === null || isNumber(v);
@@ -97,10 +98,14 @@ function validateByType(o: Record<string, unknown>): string | null {
       );
     case "approval":
       return firstError(
-        requireString(o, "targetEventId"),
+        isNonEmptyString(o.targetEventId) || isNonEmptyString(o.targetSessionId) ? null : `"targetEventId" or "targetSessionId" is required`,
+        optional(o, "targetEventId", isString, "a string"),
+        optional(o, "targetSessionId", isString, "a string"),
         o.decision === "approved" || o.decision === "rejected" ? null : `"decision" must be "approved" or "rejected"`,
         optional(o, "decidedBy", isString, "a string"),
         optional(o, "note", isString, "a string"),
+        optional(o, "requestId", isString, "a string"),
+        optional(o, "ruleIds", isStringArray, "an array of strings"),
       );
   }
 }

@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLAUDE_HOOK_EVENTS } from "./hook.js";
-import { defaultHookCommand, isArdHookCommand, runInit } from "./init.js";
-import { cleanEnv, makeFakeProject, makeTmp } from "./testutil.js";
+import { MAX_TIMEOUT_SECONDS, loadConfig } from "@ard/core";
+import { PRE_TOOL_TIMEOUT_SECONDS, RECORD_TIMEOUT_SECONDS, defaultHookCommand, isArdHookCommand, runInit } from "./init.js";
+import { cleanEnv, makeFakeProject, makeTmp } from "@ard/core/testutil";
 
 const CMD = "ard hook --agent claude-code";
 const read = (path: string) => JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
@@ -21,11 +22,65 @@ test("installs hooks for every recorded event into the personal settings.local.j
     for (const event of CLAUDE_HOOK_EVENTS) {
       assert.equal(hooks[event].length, 1);
       const group = hooks[event][0];
-      assert.deepEqual(group.hooks, [{ type: "command", command: CMD, timeout: 10 }]);
+      const timeout = event === "PreToolUse" ? PRE_TOOL_TIMEOUT_SECONDS : RECORD_TIMEOUT_SECONDS;
+      assert.deepEqual(group.hooks, [{ type: "command", command: CMD, timeout }]);
       const isToolEvent = event.includes("Tool");
       assert.equal(group.matcher, isToolEvent ? "*" : undefined, event);
     }
     assert.equal(existsSync(join(project.dir, ".claude", "settings.json")), false, "must not touch the committed file");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("the PreToolUse hook outlives the longest approval wait, or Claude Code would kill it and let the call through", () => {
+  assert.ok(PRE_TOOL_TIMEOUT_SECONDS > MAX_TIMEOUT_SECONDS);
+  assert.ok(RECORD_TIMEOUT_SECONDS < 60);
+});
+
+test("--approvals / --no-approvals write ard.config.json; omitting both leaves it alone", () => {
+  const project = makeFakeProject();
+  try {
+    assert.equal(loadConfig(project.dir).approvals, false);
+    const untouched = init(project.dir);
+    assert.equal(untouched.approvals, undefined);
+    assert.equal(existsSync(join(project.dir, "ard.config.json")), false, "plain init must not switch blocking on");
+
+    const on = init(project.dir, { approvals: true });
+    assert.deepEqual(on.approvals, { path: join(project.dir, "ard.config.json"), enabled: true, changed: true });
+    assert.equal(loadConfig(project.dir).approvals, true);
+
+    init(project.dir); // a later plain init must not reset it
+    assert.equal(loadConfig(project.dir).approvals, true);
+
+    const again = init(project.dir, { approvals: true });
+    assert.equal(again.approvals?.changed, false);
+
+    init(project.dir, { approvals: false });
+    assert.equal(loadConfig(project.dir).approvals, false);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("an unparsable ard.config.json aborts init BEFORE any hook is written (no half-finished setup)", () => {
+  const project = makeFakeProject();
+  try {
+    writeFileSync(join(project.dir, "ard.config.json"), "{ nope");
+    assert.throws(() => init(project.dir, { approvals: true }), /not valid JSON/);
+    assert.equal(existsSync(join(project.dir, ".claude", "settings.local.json")), false);
+    assert.equal(readFileSync(join(project.dir, "ard.config.json"), "utf8"), "{ nope");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("--remove leaves ard.config.json alone", () => {
+  const project = makeFakeProject();
+  try {
+    init(project.dir, { approvals: true });
+    init(project.dir, { remove: true, approvals: false });
+    assert.equal(loadConfig(project.dir).approvals, true);
   } finally {
     project.cleanup();
   }

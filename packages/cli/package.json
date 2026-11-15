@@ -12,6 +12,7 @@
     "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@ard/core": "workspace:*",
     "@ard/schema": "workspace:*"
   }
 }

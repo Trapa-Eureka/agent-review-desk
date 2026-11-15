@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentNameFor, runWrapped } from "./run.js";
-import { cleanEnv, fake, git, makeGitRepo, makeTmp, readEvents } from "./testutil.js";
+import { cleanEnv, fake, git, makeGitRepo, makeTmp, readEvents } from "@ard/core/testutil";
 import type { FileChangeEvent } from "@ard/schema";
 
 /** Run `script` (JavaScript) as the "agent" inside `dir`. */

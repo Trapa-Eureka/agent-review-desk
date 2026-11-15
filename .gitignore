@@ -29,6 +29,11 @@ review-artifacts/
 screenshots/
 !docs/**/screenshots/
 
+# This repository develops ard itself. In a normal project ard.config.json is committed to share one policy,
+# but here a developer's own approvals setting must never be committed: it would make every contributor's
+# Claude Code pause on risky commands. (Test it in a separate throwaway project instead.)
+/ard.config.json
+
 # ---------- [2] Secrets / credentials ----------
 .env
 .env.*
@@ -164,8 +169,9 @@ pids/
 *.seed
 *.pid.lock
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-core
-core.*
+# Core dumps. Root-only on purpose: a bare `core` pattern would also hide the packages/core workspace.
+/core
+/core.[0-9]*
 *.dump
 *.heapsnapshot
 

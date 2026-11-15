@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CLAUDE_HOOK_EVENTS } from "./hook.js";
-import { ardDirFor, findProjectRoot } from "./paths.js";
+import { MAX_TIMEOUT_SECONDS, ardDirFor, findProjectRoot, setApprovals } from "@ard/core";
 
 export interface InitOptions {
   /** Directory `ard init` was run in; the project root is found from here. */
@@ -10,6 +10,8 @@ export interface InitOptions {
   shared: boolean;
   /** Remove ard's hooks instead of installing them. */
   remove: boolean;
+  /** true / false: switch pre-approval of risky actions on / off in ard.config.json. undefined: leave it alone. */
+  approvals?: boolean;
   /** Override the hook command (tests). */
   command?: string;
   env?: NodeJS.ProcessEnv;
@@ -21,6 +23,8 @@ export interface InitResult {
   action: "installed" | "updated" | "unchanged" | "removed" | "nothing-to-remove";
   command: string;
   gitignore: "added" | "already-present" | "skipped";
+  /** Present when --approvals / --no-approvals was given. */
+  approvals?: { path: string; enabled: boolean; changed: boolean };
   warnings: string[];
 }
 
@@ -104,12 +108,22 @@ function stripArdHooks(settings: Json): void {
   else settings.hooks = hooks;
 }
 
+/** Recording hooks finish in milliseconds; 10 s is a generous ceiling. */
+export const RECORD_TIMEOUT_SECONDS = 10;
+/**
+ * PreToolUse may wait for a human. Its timeout MUST exceed the longest wait ard allows
+ * (MAX_TIMEOUT_SECONDS): if Claude Code killed the hook first, it would treat that as a non-blocking
+ * error and the risky call would run unapproved. ard enforces the real deadline itself.
+ */
+export const PRE_TOOL_TIMEOUT_SECONDS = MAX_TIMEOUT_SECONDS + 60;
+
 function addArdHooks(settings: Json, command: string): void {
   const hooks = hooksOf(settings);
   for (const event of CLAUDE_HOOK_EVENTS) {
     const groups = Array.isArray(hooks[event]) ? hooks[event]! : [];
     const toolEvent = event === "PreToolUse" || event === "PostToolUse" || event === "PostToolUseFailure";
-    const group: HookGroup = { ...(toolEvent ? { matcher: "*" } : {}), hooks: [{ type: "command", command, timeout: 10 }] };
+    const timeout = event === "PreToolUse" ? PRE_TOOL_TIMEOUT_SECONDS : RECORD_TIMEOUT_SECONDS;
+    const group: HookGroup = { ...(toolEvent ? { matcher: "*" } : {}), hooks: [{ type: "command", command, timeout }] };
     hooks[event] = [...groups, group];
   }
   settings.hooks = hooks;
@@ -151,6 +165,14 @@ export function runInit(options: InitOptions): InitResult {
     return { root, settingsPath, action: "removed", command, gitignore: "skipped", warnings };
   }
 
+  // Update the config first: if ard.config.json is unparsable this throws before any hook is written,
+  // so init never leaves a half-finished setup behind.
+  let approvalsResult: InitResult["approvals"];
+  if (options.approvals !== undefined) {
+    const config = setApprovals(root, options.approvals);
+    approvalsResult = { path: config.path, enabled: options.approvals, changed: config.changed };
+  }
+
   stripArdHooks(settings);
   addArdHooks(settings, command);
   const changed = JSON.stringify(settings) !== before;
@@ -171,5 +193,7 @@ export function runInit(options: InitOptions): InitResult {
   mkdirSync(ardDirFor(root, env), { recursive: true, mode: 0o700 });
   const gitignore = ensureGitignore(root);
   const action = !changed ? "unchanged" : hadArd ? "updated" : "installed";
-  return { root, settingsPath, action, command, gitignore, warnings };
+  const result: InitResult = { root, settingsPath, action, command, gitignore, warnings };
+  if (approvalsResult) result.approvals = approvalsResult;
+  return result;
 }

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { SCHEMA_VERSION } from "@ard/schema";
-import { recordClaudeHook } from "./hook.js";
+import { handleClaudeHook } from "./hook.js";
 import { runInit } from "./init.js";
+import { DEFAULT_PORT, runReview } from "./review.js";
 import { runWrapped } from "./run.js";
 
 export interface Io {
@@ -37,11 +38,18 @@ function version(): string {
 export const HELP = `ard — record what AI coding agents do, so you can review and approve it
 
 Usage:
-  ard init [--shared] [--remove] [--dir <path>]
+  ard init [--approvals | --no-approvals] [--shared] [--remove] [--dir <path>]
       Register ard's hooks for Claude Code in this project and create the local .ard/ folder.
       Default writes .claude/settings.local.json (personal, git-ignored, absolute paths).
-      --shared  write .claude/settings.json instead (committed; needs 'ard' on PATH)
-      --remove  remove ard's hooks again (recordings in .ard/ are kept)
+      --approvals     block risky actions (force push, rm -rf ~, secrets, ...) until you approve
+                      them in the review UI. Writes "approvals": true to ard.config.json.
+      --no-approvals  turn that off again
+      --shared        write .claude/settings.json instead (committed; needs 'ard' on PATH)
+      --remove        remove ard's hooks again (recordings in .ard/ are kept)
+
+  ard review [--port <number>]
+      Open the review UI for this project: sessions, diffs, commands, and the approve/reject buttons.
+      Prints a private link (127.0.0.1 only, new token each time). Default port ${DEFAULT_PORT}.
 
   ard run -- <agent> [args...]
       Run an agent (e.g. claude, codex) and record the session and the files it changed (via git).
@@ -49,9 +57,11 @@ Usage:
 
   ard hook --agent claude-code
       Used by Claude Code, not by you: reads a hook event on stdin and appends it to .ard/events.jsonl.
-      It always exits 0 so it can never block or break the agent.
+      It exits 2 (block) only when approvals are on and a risky action was denied or not approved;
+      every other problem exits 0 so the recorder can never break the agent.
 
-Recordings are written to .ard/events.jsonl (set ARD_DIR to use another folder).
+Recordings are written to .ard/events.jsonl and indexed in .ard/data.db (set ARD_DIR to use another folder).
+Project settings live in ard.config.json (committed): approvals, timeoutSeconds, per-rule overrides.
 `;
 
 function takeFlag(args: string[], flag: string): boolean {
@@ -89,13 +99,20 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       const args = [...rest];
       const shared = takeFlag(args, "--shared");
       const remove = takeFlag(args, "--remove");
+      const on = takeFlag(args, "--approvals");
+      const off = takeFlag(args, "--no-approvals");
       const dir = takeValue(args, "--dir") ?? io.cwd;
       if (args.length > 0) {
         io.err(`ard init: unknown argument: ${args.join(" ")}`);
         return 2;
       }
+      if (on && off) {
+        io.err("ard init: --approvals and --no-approvals cannot be used together");
+        return 2;
+      }
       try {
-        const result = runInit({ dir, shared, remove, env: io.env });
+        const approvals = on ? true : off ? false : undefined;
+        const result = runInit({ dir, shared, remove, ...(approvals === undefined ? {} : { approvals }), env: io.env });
         for (const warning of result.warnings) io.err(`warning: ${warning}`);
         if (result.action === "removed") io.out(`Removed ard hooks from ${result.settingsPath}. Recordings in .ard/ were kept.`);
         else if (result.action === "nothing-to-remove") io.out(`No ard hooks found in ${result.settingsPath}.`);
@@ -104,6 +121,10 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
           io.out(`  hook command: ${result.command}`);
           io.out(`  recordings:   ${result.root}/.ard/events.jsonl`);
           io.out(`  .gitignore:   ${result.gitignore === "added" ? "added .ard/" : result.gitignore === "already-present" ? ".ard/ already ignored" : "skipped (not a git repository)"}`);
+          if (result.approvals) {
+            io.out(`  approvals:    ${result.approvals.enabled ? "ON" : "off"} (${result.approvals.path}${result.approvals.changed ? "" : ", unchanged"})`);
+            if (result.approvals.enabled) io.out('  Risky actions will now wait for you. Run "ard review" to approve or reject them.');
+          }
           io.out("Restart Claude Code (or open /hooks) for the new hooks to take effect.");
         }
         return 0;
@@ -114,8 +135,9 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
     }
 
     case "hook": {
-      // A recorder must never break the agent it observes: whatever happens, exit 0.
-      // (Exit code 2 would make Claude Code BLOCK the tool call.)
+      // A recorder must never break the agent it observes, so every problem exits 0. The one exception is
+      // deliberate: exit 2 makes Claude Code BLOCK the tool call, and that is returned only when approvals
+      // are on and the action was denied, rejected, timed out, or could not be put to a human.
       try {
         const args = [...rest];
         const agent = takeValue(args, "--agent");
@@ -123,11 +145,33 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
           io.err(`ard hook: --agent must be "claude-code" (got ${agent ?? "nothing"}). This command is meant to be called by Claude Code.`);
           return 0;
         }
-        recordClaudeHook(await io.readStdin(), io.env, io.cwd);
+        const result = await handleClaudeHook(await io.readStdin(), io.env, io.cwd);
+        if (result.message) io.err(result.message);
+        return result.exitCode;
       } catch (error) {
         io.err(`ard hook: not recorded: ${(error as Error).message}`);
+        return 0;
       }
-      return 0;
+    }
+
+    case "review": {
+      const args = [...rest];
+      const portText = takeValue(args, "--port");
+      if (args.length > 0) {
+        io.err(`ard review: unknown argument: ${args.join(" ")}`);
+        return 2;
+      }
+      const port = portText === undefined ? DEFAULT_PORT : Number(portText);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        io.err("ard review: --port must be a whole number from 1024 to 65535");
+        return 2;
+      }
+      try {
+        return await runReview({ cwd: io.cwd, env: io.env, port, log: io.err });
+      } catch (error) {
+        io.err(`ard review: ${(error as Error).message}`);
+        return 1;
+      }
     }
 
     case "run": {

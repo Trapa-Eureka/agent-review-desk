@@ -39,6 +39,15 @@ export const LIMITS = {
   keys: 60,
 } as const;
 
+/**
+ * Name of the first secret pattern found in `text`, or null. Uses `search`, not `test`: the patterns
+ * carry the global flag, and `RegExp.test` on a global regex keeps `lastIndex` state between calls.
+ */
+export function findSecret(text: string): string | null {
+  for (const { name, re } of SECRET_PATTERNS) if (text.search(re) !== -1) return name;
+  return null;
+}
+
 export function redactString(input: string): string {
   let out = input;
   for (const { name, re } of SECRET_PATTERNS) out = out.replace(re, `[REDACTED:${name}]`);
