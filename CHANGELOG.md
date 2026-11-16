@@ -42,7 +42,7 @@ First release. The free, local tier works end to end. Install from source (see t
 ### Known limitations
 
 - The policy is a safety net, not a sandbox; redaction is best effort; macOS and Linux only.
-- Not yet tried at release time: picture data from Claude Code hooks (checked afterwards: it was not captured in this release, see *Unreleased*), what the Codex terminal UI shows *you* when a hook blocks a call (the model's side is known), and rename patches from a real Codex payload.
+- Not yet tried at release time: picture data from Claude Code hooks (checked afterwards: it was not captured in this release, see *Unreleased*), what the Codex terminal shows *you* when a hook blocks a call (checked afterwards: `• Blocked by hook` followed by ard's message), and rename patches from a real Codex payload.
 - Paid plans are still in planning; the related code in the repository is blocked and not part of this release.
 
 [Unreleased]: https://github.com/Trapa-Eureka/agent-review-desk/compare/v0.1.0...HEAD

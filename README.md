@@ -157,6 +157,7 @@ ard init --screenshots                                          # also keep pict
 - The wrapper cannot see inside the agent, cannot see git-ignored files, and cannot attribute edits to a file that was already untracked before the run.
 - The policy is a safety net, not a sandbox. It matches command text and file paths, so a wrapped, encoded or indirect command (`bash -c "$(…)"`, a script that does the deleting) can slip past it, and a harmless command that merely contains a dangerous-looking string can be flagged. It only gates what Claude Code's hooks see; the `ard run` wrapper cannot block anything.
 - While a request waits, the agent is stuck. If you enable approvals, keep `ard review` open (or lower `timeoutSeconds`).
+- On Codex, one interactive session ended a waiting approval from Codex's side after about 5 minutes, before ard's own timeout; the command did not run, and the leftover request expires by itself and can no longer be approved. Another run (`codex exec`) waited the full 300 seconds and blocked as designed. The cause of the first is not known, so answer requests promptly instead of relying on the timeout.
 - The review UI shows what was recorded, which is redacted on a best-effort basis. It runs on your machine only (see [Data and privacy](#data-and-privacy)).
 - Screenshots from tool results are best effort (see [Screenshots](#screenshots)); pictures are never redacted, only kept local and opt-in.
 - macOS and Linux only; Windows is untested. Node's built-in SQLite is still marked experimental by Node; ard hides its startup warning.

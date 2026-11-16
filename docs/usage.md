@@ -42,7 +42,9 @@ What Codex's hooks give ard (checked against payloads captured from a real Codex
 - Checked on Codex 0.169.0: a blocking hook (exit code 2) also stops `apply_patch` and works inside `codex exec`, including when Codex reports `permission_mode` as `bypassPermissions`.
 - Checked on Codex 0.169.0: when a hook blocks a call, the model is told `Command blocked by PreToolUse hook: <the hook's message>. Command: <the command, or the whole patch>`. So ard's message reaches the model word for word, which is why it says not to retry. The same call blocked a shell command and an `apply_patch`, and the file was not created.
 - Also checked: one `apply_patch` call that updates one file and deletes another is recorded as two file changes (paths made relative to the project; a deleted file has no content to show).
-- Not verified: what the Codex terminal UI shows *you* when a call is blocked (only the model's side was observed, through `codex exec`), and patches that rename a file.
+- Waiting for your decision, checked on Codex 0.169.0 with `codex exec`: with nobody answering, ard waited the full 300 seconds, then blocked the call and recorded a timeout; the command did not run, and the model was told `[ard] Nobody approved this action within 300s …`. In one interactive Codex session the waiting call was ended from Codex's side after about 5 minutes instead, before ard's own timeout. The command did not run (nothing was recorded after the request), and the leftover request expires by itself and can no longer be approved. The cause was not found, so on Codex answer requests promptly instead of relying on the timeout.
+- Checked in the Codex terminal: a blocked call is shown to *you* as `• Blocked by hook`, with ard's message underneath (for example `[ard] Blocked by policy (delete-ard-data): … ask the user.`), and the model then explains in its own words that the command was blocked. The command did not run.
+- Not verified: patches that rename a file.
 
 ## Record any agent (wrapper)
 
