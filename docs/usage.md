@@ -34,10 +34,11 @@ What Codex's hooks give ard (checked against payloads captured from a real Codex
 
 - **Sessions, every shell command and its output**, and the other tool calls. ✔
 - **No exit code.** Codex sends a command's output as one string and nothing else: a failing command looks like a quiet success. The review UI therefore shows no exit badge for Codex commands.
-- **No file edits.** The Codex model wrote files with shell commands (`printf … > file`), which are just commands. `apply_patch` calls would be turned into diffs, but that follows Codex's documented patch format and has **not been seen in a real payload**. For file changes, run `ard run -- codex` as well: hooks and wrapper link up automatically, and the wrapper finds the changed files through git.
+- **No file edits.** The Codex model wrote files with shell commands (`printf … > file`), which are just commands. When Codex edits through `apply_patch`, the hook turns the patch into a diff (checked against a real `apply_patch` call on Codex 0.169.0). For file changes, run `ard run -- codex` as well: hooks and wrapper link up automatically, and the wrapper finds the changed files through git.
 - **Risky-command blocking** (`ard init --agent codex --approvals`): **verified on Codex 0.169.0 for shell commands.** A hook that exits with code 2, or answers with a JSON "deny", stopped the command from running, and an allowed command ran normally.
 - **A timeout means "run it".** Also verified: if a hook is still waiting when its timeout passes, Codex stops waiting and **runs the command anyway**. So on Codex ard waits for your decision for at most **9 minutes** (whatever `timeoutSeconds` says; Claude Code keeps the configured value), and registers the hook with Codex's documented default timeout of 10 minutes, so ard always gives up and blocks first.
-- Not verified: how Codex words the blocking reason to you and to the model, blocking inside `codex exec`, and `apply_patch` calls.
+- Checked on Codex 0.169.0: a blocking hook (exit code 2) also stops `apply_patch` and works inside `codex exec`, including when Codex reports `permission_mode` as `bypassPermissions`.
+- Not verified: how Codex words the blocking reason to you and to the model.
 
 ## Record any agent (wrapper)
 

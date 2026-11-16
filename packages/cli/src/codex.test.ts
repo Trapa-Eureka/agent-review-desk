@@ -104,7 +104,7 @@ test("malformed or unknown payloads are handled without throwing", () => {
   }
 });
 
-// ------------------------------------------------------------------- apply_patch (documented format, NOT seen in a capture)
+// ------------------------------------------------------------------- apply_patch (the tool_input / tool_response shape is VERIFIED on Codex 0.169.0, see below)
 
 const PATCH = ["*** Begin Patch", "*** Add File: docs/new.md", "+# Title", "+body", "*** Update File: src/a.ts", "@@ function f", " keep", "-old line", "+new line", "*** Delete File: old.txt", "*** End Patch"].join("\n");
 
@@ -243,4 +243,20 @@ test("on Codex the wait for a human is capped below Codex's hook timeout, becaus
 
 test("the cap is Codex-only: Claude Code keeps the configured wait", async () => {
   assert.equal(await requestLifetimeSeconds("claude-code", 3000), 3000);
+});
+
+// A real apply_patch call, captured on Codex 0.169.0 (tool_name "apply_patch", the patch text in tool_input.command, the
+// result as ONE string). The envelope fields (ids, paths) were not logged by the capture hook and follow the other fixtures.
+test("a REAL apply_patch call: Pre records the call without the patch text, Post records the file change", () => {
+  const pre = eventsFromCodexPayload(fixture("pre-apply-patch"), "/proj");
+  assert.equal(pre.length, 1);
+  assert.equal(pre[0]!.type, "tool_use");
+  assert.equal(JSON.stringify(pre[0]).includes("patch_ok.txt"), false, "the patch text is recorded once, in the file_change");
+  assert.equal(JSON.stringify(pre[0]).includes("command_chars"), true);
+
+  const post = eventsFromCodexPayload(fixture("post-apply-patch"), "/proj");
+  const change = post.find((e) => e.type === "file_change");
+  assert.ok(change && change.type === "file_change");
+  assert.deepEqual([change.path, change.operation, change.newText, change.tool], ["patch_ok.txt", "create", "hello", "apply_patch"]);
+  for (const e of [...pre, ...post]) assert.equal(validateEvent(e).ok, true);
 });

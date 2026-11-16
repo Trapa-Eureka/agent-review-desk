@@ -13,8 +13,8 @@ import { LIMITS, baseFields, extractImages, safeText, sanitize, toProjectPath, t
  *    failing command (`false`) arrives as an empty string. So the exit code of a Codex command is unknown.
  *  - a file the agent wrote through a shell command (`printf … > notes.txt`) is just a Bash command: no file-change data.
  *
- * What is NOT known: the shape of an `apply_patch` call (the captured session never used that tool), so its parsing below
- * follows Codex's documented patch convention and has not been seen in a real payload.
+ * `apply_patch` (verified on 0.169.0): tool_name "apply_patch", the patch text in tool_input.command, the result one string.
+ * Only an `Add File` patch has been captured; `Update`/`Delete` parsing follows Codex's documented patch convention.
  */
 export interface CodexHookPayload {
   session_id?: unknown;
