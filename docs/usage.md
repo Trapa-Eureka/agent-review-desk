@@ -116,7 +116,7 @@ ard pr-comment                   # posts (or updates) a PR comment listing the s
 - **The comment contains counts and review decisions only**: never code, command output, file names or paths (it only says how many sessions were left out), because a pull request can be public. It updates its own earlier comment instead of adding a new one, and it only ever edits your own comments.
 - `--pr <number>` targets another pull request. `--context <name>` renames the status (letters, digits, `. _ / -`).
 
-Limits, honestly: anyone with write access can post a status named `ard/review` too, so this stops an *accidental* merge without review, not a determined one (the same people can merge anyway). The review happens on the author's machine; GitHub only records who posted the status. It has been tried end to end on a real pull request (status posted with the normal `gh` login, required as a check, comment updated in place, status gone after a new push). Start with `--dry-run` on yours.
+Limits, honestly: anyone with write access can post a status named `ard/review` too, so this stops an *accidental* merge without review, not a determined one (the same people can merge anyway). The review happens on the author's machine; GitHub only records who posted the status. It has been tried end to end on a real pull request (status posted with the normal `gh` login, required as a check, comment updated in place, status gone after a new push), and the choice of sessions by changed files was checked on a real pull request with `--dry-run` (a session that changed a PR file counted, a session that changed only another file left out, a session with no file change kept). Start with `--dry-run` on yours.
 
 ## Approvals: pause risky actions until you say so
 

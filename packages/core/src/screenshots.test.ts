@@ -134,6 +134,20 @@ test("the REAL result of Claude Code's Read tool on a picture ({ type, file: { b
   assert.equal(JSON.stringify(evil.stripped).includes(b64(svg())), false);
 });
 
+test("the REAL result of a Claude in Chrome screenshot (a top-level array with a base64 image block, verified on Claude Code 2.1.325) is captured", () => {
+  const a = jpeg();
+  const real = [
+    { type: "text", text: "Successfully captured screenshot (1568x774, jpeg) - ID: ss_1" },
+    { type: "text", text: "\n\nTab Context:\n- Executed on tabId: 1" },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64(a) } },
+  ];
+  const { images, stripped } = extractImages(real);
+  assert.deepEqual(images.map((i) => i.mediaType), ["image/jpeg"]);
+  assert.ok(images[0]!.data.equals(a));
+  assert.equal(JSON.stringify(stripped).includes(b64(a)), false, "base64 must not survive");
+  assert.match(JSON.stringify(stripped), /Successfully captured screenshot/, "the text blocks are kept");
+});
+
 test("ATTACK: a block that CLAIMS to be a PNG but is an SVG, HTML or garbage is not accepted as an image (but its data is still stripped)", () => {
   for (const evil of [svg(), Buffer.from("<html>x</html>"), Buffer.from("not an image at all")]) {
     const { images, stripped } = extractImages({ content: [{ type: "image", data: b64(evil), mimeType: "image/png" }] });

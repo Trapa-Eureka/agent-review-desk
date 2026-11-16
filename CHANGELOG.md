@@ -6,7 +6,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Fixed
 
-- Keeping pictures from hooks (`screenshots: true`) now works when Claude Code reads a picture file with its `Read` tool. In 0.1.0 the picture was not kept, because only two other result shapes were recognized; Claude Code actually sends `{ type: "image", file: { base64, … } }` (checked against a real Claude Code 2.1.325 payload). Nothing leaked before: image data was never written to the log. Pictures from browser tools are still unverified.
+- Keeping pictures from hooks (`screenshots: true`) now works when Claude Code reads a picture file with its `Read` tool. In 0.1.0 the picture was not kept, because only two other result shapes were recognized; Claude Code actually sends `{ type: "image", file: { base64, … } }` (checked against a real Claude Code 2.1.325 payload). Nothing leaked before: image data was never written to the log. A Claude in Chrome screenshot was checked too: it already worked, and is now pinned by a test.
 
 ### Changed
 
@@ -35,7 +35,7 @@ First release. The free, local tier works end to end. Install from source (see t
 ### Verified on real systems
 
 - Codex 0.169.0: exit code 2 and a JSON deny both stop a shell command and an `apply_patch` call, also inside `codex exec`. A hook that outlives its timeout is **fail-open** in Codex, so the approval wait is capped at 540 s below the 600 s hook timeout.
-- The pull request gate, end to end on a real pull request (status as a required check, comment updated in place, status cleared by a new push).
+- The pull request gate, end to end on a real pull request (status as a required check, comment updated in place, status cleared by a new push). The choice of sessions by the PR's changed files (a session that changed a PR file is counted, one that changed only other files is left out, one with no recorded file change is kept) was checked afterwards with `--dry-run` on a real pull request in a throwaway private repository.
 - Keychain storage of the API key on macOS.
 - The AI summary against the real Anthropic API (`claude-opus-5-5`, one small demo session). Other models and long sessions were tried only against a stand-in server.
 

@@ -51,7 +51,7 @@ One session: your decision at the top, then the timeline. A failing test run, th
 | `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (tried end to end on a real pull request) |
 | Multi-agent view in the review UI: per-agent overview, agent filter, `ard run` and hook sessions of one run linked | Done |
 | AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tried once against the real API with `claude-opus-5-5`) |
-| Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture verified with Claude Code's `Read` tool on a picture; not yet with a browser tool) |
+| Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture verified on Claude Code with its `Read` tool on a picture and with a Claude in Chrome screenshot) |
 | Paid plans: shared team workspace, cloud sync, roles, single sign-on | Planned |
 
 ### How it works
@@ -148,7 +148,7 @@ ard init --screenshots                                          # also keep pict
 - **A picture cannot be redacted.** It may show anything that was on the screen: tokens, personal data, other windows. That is why keeping pictures from tool results is **opt-in** (`"screenshots": true` in `ard.config.json`), and why screenshots stay on your machine.
 - Pictures are stored in `.ard/screenshots/<sha256>` (owner-only; the same image is stored once). The log only holds a small `screenshot` event that points at the file.
 - **Only PNG, JPEG, GIF and WebP are accepted**, judged from the file's first bytes, up to 8 MiB. SVG and everything else is refused (SVG can carry script). The review UI serves a picture only by its hash, never by a path.
-- **Whether a hook receives the picture at all depends on the agent.** Claude Code's documentation does not say whether `PostToolUse` carries image data. Checked on Claude Code 2.1.325: when the agent reads a picture file with its `Read` tool, the hook does receive the image (`{ type: "image", file: { base64, … } }`) and ard keeps it. It has not been verified for browser tools, so capture from those is best effort. Whatever arrives, base64 image data is never written into the text log. `ard screenshot` always works.
+- **Whether a hook receives the picture at all depends on the agent.** Claude Code's documentation does not say whether `PostToolUse` carries image data. Checked on Claude Code 2.1.325: when the agent reads a picture file with its `Read` tool, the hook does receive the image (`{ type: "image", file: { base64, … } }`) and ard keeps it. A Claude in Chrome screenshot also arrives (an `{ type: "image", source: { type: "base64", … } }` block inside the tool result) and is kept the same way; other browser or MCP tools were not tried, so capture from them is best effort. Whatever arrives, base64 image data is never written into the text log. `ard screenshot` always works.
 
 ## Known limitations
 
