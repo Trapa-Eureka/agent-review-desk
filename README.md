@@ -74,7 +74,7 @@ Until the CLI is published, run it from the build output. For convenience, add a
 alias ard='node /path/to/agent-review-desk/packages/cli/dist/index.js'
 ```
 
-After the first release _(planned)_ you will be able to install the CLI with:
+Publishing to npm is planned (a GitHub release is source only). Once it is published, you will be able to install the CLI with:
 
 ```bash
 npm install -g agent-review-desk
@@ -221,6 +221,8 @@ agent-review-desk/
 ## Contributing
 
 The project is at an early stage. Please open an issue to discuss a change before sending a pull request. All files in this repository are written in English.
+
+Found a security problem? Please do not open a public issue; see [SECURITY.md](SECURITY.md).
 
 ## License
 
