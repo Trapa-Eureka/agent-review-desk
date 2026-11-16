@@ -1,0 +1,15 @@
+{
+  "session_id": "01a1dfe6-8864-7cb1-b356-1a8f825a6140",
+  "turn_id": "01a1dfe6-cf1e-75c3-b246-08df25f9eaa5",
+  "transcript_path": "/home/user/.codex/sessions/2026/11/16/rollout.jsonl",
+  "cwd": "/proj",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "apply_patch",
+  "hook_event_name": "PostToolUse",
+  "tool_input": {
+    "command": "*** Begin Patch\n*** Update File: /proj/upd.txt\n@@\n-line2\n+LINE-TWO\n*** Delete File: /proj/del.txt\n*** End Patch"
+  },
+  "tool_response": "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM /proj/upd.txt\nD /proj/del.txt\n",
+  "tool_use_id": "apply-patch-2"
+}

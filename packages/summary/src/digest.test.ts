@@ -55,6 +55,16 @@ test("successful tool completions add nothing, failures and tool names do", () =
   assert.equal(d.stats.included, 2);
 });
 
+test("the header says when recorded events are not listed, so the gap is not read as missing data", () => {
+  const post = (ok: boolean): ArdEvent => ({ ...baseFields(ctx), type: "tool_use", phase: "post", toolName: "Bash", ok });
+  const gap = buildDigest([start, cmd("pnpm test"), post(true)]);
+  assert.match(gap.text, /^Agent: claude-code\nStarted: .+\nEvents: 3 recorded, 2 listed below \(a successful tool completion adds nothing, so it is not listed\)\n\n/);
+  // when every event is listed the header is exactly what it always was
+  const all = buildDigest([start, cmd("pnpm test")]);
+  assert.match(all.text, /^Agent: claude-code\nStarted: .+\nEvents: 2\n\n/);
+  assert.equal(all.stats.events, 2); // the number shown in the preview is unchanged
+});
+
 test("a long session is shortened: the start and (more of) the end are kept, with an honest marker in between", () => {
   const events: ArdEvent[] = [start, ...Array.from({ length: 400 }, (_, i) => cmd(`step ${i} ${"x".repeat(150)}`)), cmd("FINAL command")];
   const d = buildDigest(events, { maxChars: 10_000 });

@@ -124,7 +124,10 @@ export function buildDigest(events: ArdEvent[], options: { maxChars?: number } =
   }
 
   const first = events[0];
-  const header = first ? `Agent: ${first.agent}\nStarted: ${first.ts}\nEvents: ${events.length}` : "Agent: unknown\nEvents: 0";
+  // Say so when some recorded events are not listed (a successful tool completion adds nothing), so the summarizer
+  // does not report the gap between the two numbers as missing data.
+  const count = entries.length === events.length ? `${events.length}` : `${events.length} recorded, ${entries.length} listed below (a successful tool completion adds nothing, so it is not listed)`;
+  const header = first ? `Agent: ${first.agent}\nStarted: ${first.ts}\nEvents: ${count}` : "Agent: unknown\nEvents: 0";
   // Redact once more; and make sure recorded text can never close the tag the prompt wraps this in.
   const text = redactString(`${header}\n\n${body}`).replace(/<\/session/gi, "<\\/session");
   return {

@@ -125,6 +125,7 @@ const asRecord = (v: unknown): Record<string, unknown> | null => (typeof v === "
  * The shape of results is owned by the agent and not fully documented, so this is deliberately tolerant. It understands:
  *  - MCP content blocks:        { type: "image", data: <base64>, mimeType }
  *  - API-style blocks:           { type: "image", source: { type: "base64", media_type, data: <base64> } }
+ *  - Claude Code's Read result:  { type: "image", file: { base64: <base64>, type: "image/png", originalSize, dimensions } }
  *  - a Bash result flagged as an image: { isImage: true, stdout: <base64> }
  * Whatever the block CLAIMS to be, an image is accepted only if its decoded bytes pass `sniffImage`.
  * The stripped copy is produced whether or not the images are kept, so base64 never lands in the event log.
@@ -151,7 +152,8 @@ export function extractImages(value: unknown): ExtractedImages {
 
     if (obj.type === "image") {
       const source = asRecord(obj.source);
-      const found = take(source ? source.data : obj.data);
+      const file = asRecord(obj.file); // Claude Code's Read tool on a picture (verified): { type: "image", file: { base64, type, ... } }
+      const found = take(source ? source.data : file ? file.base64 : obj.data);
       return placeholder(found.bytes, found.mediaType);
     }
     if (obj.isImage === true && typeof obj.stdout === "string") {

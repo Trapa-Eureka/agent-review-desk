@@ -20,7 +20,7 @@ const map = (payload: CodexHookPayload, env: NodeJS.ProcessEnv = cleanEnv()) => 
 const ofType = <T extends ArdEvent["type"]>(events: ArdEvent[], type: T) => events.filter((e): e is Extract<ArdEvent, { type: T }> => e.type === type);
 
 test("every real captured payload maps to events that pass schema validation", () => {
-  for (const name of ["session-start", "session-end", "pre-bash-echo", "post-bash-echo", "pre-bash-false", "post-bash-false", "post-bash-curl", "post-bash-write-file", "permission-request", "stop"]) {
+  for (const name of ["session-start", "session-end", "pre-bash-echo", "post-bash-echo", "pre-bash-false", "post-bash-false", "post-bash-curl", "post-bash-write-file", "pre-apply-patch", "post-apply-patch", "pre-apply-patch-update-delete", "post-apply-patch-update-delete", "permission-request", "stop"]) {
     for (const event of map(fixture(name))) {
       const result = validateEvent(event);
       assert.equal(result.ok, true, `${name}: ${result.ok ? "" : result.error}`);
@@ -108,7 +108,7 @@ test("malformed or unknown payloads are handled without throwing", () => {
 
 const PATCH = ["*** Begin Patch", "*** Add File: docs/new.md", "+# Title", "+body", "*** Update File: src/a.ts", "@@ function f", " keep", "-old line", "+new line", "*** Delete File: old.txt", "*** End Patch"].join("\n");
 
-test("apply_patch text is parsed into create / modify / delete (synthetic: the captured session never used this tool)", () => {
+test("apply_patch text is parsed into create / modify / delete (synthetic text; a real Update + Delete payload is pinned below)", () => {
   const files = parseApplyPatch(PATCH);
   assert.deepEqual(files.map((f) => [f.operation, f.path]), [["create", "docs/new.md"], ["modify", "src/a.ts"], ["delete", "old.txt"]]);
   assert.equal(files[0]!.newText, "# Title\nbody");
@@ -132,6 +132,24 @@ test("an apply_patch PostToolUse yields file_change events, and the patch text i
   assert.equal(JSON.stringify(pre).includes("old line"), false);
   assert.equal((pre.input as { command_chars?: number }).command_chars, PATCH.length);
   for (const e of events) assert.equal(validateEvent(e).ok, true);
+});
+
+test("a REAL Update File + Delete File patch (Codex 0.169.0): both in one call, absolute paths, and an @@ without context", () => {
+  const pre = fixture("pre-apply-patch-update-delete");
+  const post = fixture("post-apply-patch-update-delete");
+  const changes = ofType(map(post), "file_change");
+  // one call changed two files; absolute paths inside the project become project-relative
+  assert.deepEqual(changes.map((c) => [c.operation, c.path, c.tool, c.toolUseId]), [["modify", "upd.txt", "apply_patch", "apply-patch-2"], ["delete", "del.txt", "apply_patch", "apply-patch-2"]]);
+  // the modify carries the real diff: line2 -> LINE-TWO
+  assert.deepEqual(parseUnifiedDiff(changes[0]!.patch!).filter((l) => l.kind === "add" || l.kind === "del").map((l) => [l.kind, l.text]), [["del", "line2"], ["add", "LINE-TWO"]]);
+  // a deletion arrives without the old content: nothing to show, and nothing invented
+  assert.equal(changes[1]!.oldText, undefined);
+  assert.equal(changes[1]!.patch, undefined);
+  for (const e of changes) assert.equal(validateEvent(e).ok, true);
+  // the pre event records the call but not the patch text (it is stored once, as file changes)
+  const [preTool] = ofType(map(pre), "tool_use");
+  assert.equal(JSON.stringify(preTool).includes("LINE-TWO"), false);
+  assert.equal(ofType(map(pre), "file_change").length, 0);
 });
 
 // ---------------------------------------------------------------------- recording and the pre-approval flow

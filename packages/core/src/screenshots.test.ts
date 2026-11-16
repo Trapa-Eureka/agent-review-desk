@@ -119,6 +119,21 @@ test("extractImages understands MCP blocks, API-style blocks and a Bash image re
   assert.equal(JSON.stringify(bash.stripped).includes(b64(png())), false);
 });
 
+test("the REAL result of Claude Code's Read tool on a picture ({ type, file: { base64 } }, verified on 2.1.325) is captured, and its data is stripped", () => {
+  const a = png(40);
+  const real = { type: "image", file: { base64: b64(a), type: "image/png", originalSize: a.length, dimensions: { originalWidth: 996, originalHeight: 473, displayWidth: 996, displayHeight: 473 } } };
+  const { images, stripped } = extractImages(real);
+  assert.equal(images.length, 1);
+  assert.equal(images[0]!.mediaType, "image/png");
+  assert.ok(images[0]!.data.equals(a));
+  assert.equal(JSON.stringify(stripped).includes(b64(a)), false, "base64 must not survive");
+  assert.deepEqual(stripped, { type: "image", omitted: true, mediaType: "image/png", bytes: a.length });
+  // the same shape with something that is not a raster picture: not accepted (its claim of image/png does not count), still stripped
+  const evil = extractImages({ type: "image", file: { base64: b64(svg()), type: "image/png" } });
+  assert.equal(evil.images.length, 0);
+  assert.equal(JSON.stringify(evil.stripped).includes(b64(svg())), false);
+});
+
 test("ATTACK: a block that CLAIMS to be a PNG but is an SVG, HTML or garbage is not accepted as an image (but its data is still stripped)", () => {
   for (const evil of [svg(), Buffer.from("<html>x</html>"), Buffer.from("not an image at all")]) {
     const { images, stripped } = extractImages({ content: [{ type: "image", data: b64(evil), mimeType: "image/png" }] });

@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+
+- Keeping pictures from hooks (`screenshots: true`) now works when Claude Code reads a picture file with its `Read` tool. In 0.1.0 the picture was not kept, because only two other result shapes were recognized; Claude Code actually sends `{ type: "image", file: { base64, … } }` (checked against a real Claude Code 2.1.325 payload). Nothing leaked before: image data was never written to the log. Pictures from browser tools are still unverified.
+
+### Changed
+
+- AI summary: the header of the text that is sent now says when recorded events are not listed (`Events: 6 recorded, 4 listed below …`), so the summary does not report that gap as missing data.
+
 ## [0.1.0] - 2026-11-16
 
 First release. The free, local tier works end to end. Install from source (see the README); the package is not on npm yet.
@@ -34,7 +42,7 @@ First release. The free, local tier works end to end. Install from source (see t
 ### Known limitations
 
 - The policy is a safety net, not a sandbox; redaction is best effort; macOS and Linux only.
-- Not yet tried: picture data from Claude Code hooks, the wording Codex shows when a hook blocks a call, and `Update`/`Delete` patches from a real Codex payload.
+- Not yet tried at release time: picture data from Claude Code hooks (checked afterwards: it was not captured in this release, see *Unreleased*), what the Codex terminal UI shows *you* when a hook blocks a call (the model's side is known), and rename patches from a real Codex payload.
 - Paid plans are still in planning; the related code in the repository is blocked and not part of this release.
 
 [Unreleased]: https://github.com/Trapa-Eureka/agent-review-desk/compare/v0.1.0...HEAD

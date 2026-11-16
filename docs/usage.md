@@ -40,7 +40,9 @@ What Codex's hooks give ard (checked against payloads captured from a real Codex
 - **Risky-command blocking** (`ard init --agent codex --approvals`): **verified on Codex 0.169.0 for shell commands.** A hook that exits with code 2, or answers with a JSON "deny", stopped the command from running, and an allowed command ran normally.
 - **A timeout means "run it".** Also verified: if a hook is still waiting when its timeout passes, Codex stops waiting and **runs the command anyway**. So on Codex ard waits for your decision for at most **9 minutes** (whatever `timeoutSeconds` says; Claude Code keeps the configured value), and registers the hook with Codex's documented default timeout of 10 minutes, so ard always gives up and blocks first.
 - Checked on Codex 0.169.0: a blocking hook (exit code 2) also stops `apply_patch` and works inside `codex exec`, including when Codex reports `permission_mode` as `bypassPermissions`.
-- Not verified: how Codex words the blocking reason to you and to the model.
+- Checked on Codex 0.169.0: when a hook blocks a call, the model is told `Command blocked by PreToolUse hook: <the hook's message>. Command: <the command, or the whole patch>`. So ard's message reaches the model word for word, which is why it says not to retry. The same call blocked a shell command and an `apply_patch`, and the file was not created.
+- Also checked: one `apply_patch` call that updates one file and deletes another is recorded as two file changes (paths made relative to the project; a deleted file has no content to show).
+- Not verified: what the Codex terminal UI shows *you* when a call is blocked (only the model's side was observed, through `codex exec`), and patches that rename a file.
 
 ## Record any agent (wrapper)
 
