@@ -20,6 +20,16 @@ Agent Review Desk keeps one reviewable trail:
 
 It is built for development teams and agencies that use AI agents and need an audit trail.
 
+### What it looks like
+
+The review UI (`ard review`) on a throwaway demo project with made-up sessions. One row per agent, with how many sessions are still waiting for a decision and how many calls the policy blocked:
+
+![The review UI: an Agents table and a Sessions list with a blocked call and sessions that are not reviewed yet](docs/images/review-overview.png)
+
+One session: your decision at the top, then the timeline. A failing test run, the edit that fixed it as a diff, and a new test file. In both pictures the folder path was shortened to `~/shop-api` by hand (the demo lives in a long temporary folder); your own UI shows the real path.
+
+![A session page with the approve and reject buttons, the optional AI summary button and a timeline of a failed command, an edit diff and a created file](docs/images/review-session.png)
+
 ## Features
 
 | Feature | Status |

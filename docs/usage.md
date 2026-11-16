@@ -2,6 +2,8 @@
 
 Every command, explained. New here? Start with the [Quick start](../README.md#quick-start); [Installation](../README.md#installation) comes first.
 
+한국어: [usage.ko.md](usage.ko.md)
+
 **On this page:** [Hooks for Claude Code](#record-a-claude-code-session-hooks) · [Hooks for Codex](#record-a-codex-session-hooks) · [Any agent (wrapper)](#record-any-agent-wrapper) · [Review UI](#review-sessions-web-ui) · [AI summary](#ai-summary-bring-your-own-key) · [Pull request gate](#gate-a-pull-request-without-github-actions) · [Approvals](#approvals-pause-risky-actions-until-you-say-so)
 
 ## Record a Claude Code session (hooks)
