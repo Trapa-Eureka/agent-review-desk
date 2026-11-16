@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest something that would make reviewing agent work easier
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the roadmap in the README first; the item may already be planned. Paid and team features are still in planning and are not supported yet.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: How it could work. A rough idea is fine.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Workarounds, other tools, or alternatives you considered.
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent does this concern
+      options:
+        - Claude Code
+        - Codex
+        - Another agent through `ard run`
+        - All of them or none in particular

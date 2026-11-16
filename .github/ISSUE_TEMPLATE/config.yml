@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/Trapa-Eureka/agent-review-desk/security/advisories/new
+    about: Do not open a public issue for a security problem. Use private reporting; see SECURITY.md for what counts.
