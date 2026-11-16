@@ -92,7 +92,7 @@ Prefer not to save it? Set `ANTHROPIC_API_KEY=...` for that terminal instead; if
 - **What is in the text:** commands with exit codes and a short piece of their output, changed files with the changed lines (long diffs are cut), approval decisions, and failures. Secrets are redacted again first, but redaction is best effort: read the preview if the session touched anything sensitive. **Pictures are never sent.** Very long sessions are shortened (the start and the end are kept) and the preview says so.
 - **The default model is `claude-opus-5-5`.** `ARD_SUMMARY_MODEL=claude-haiku-5-5` is much cheaper (about 1/40 of the price per token); `claude-sonnet-5-5` is in between. Other values are ignored.
 - **Treat it as a hint, not a verdict.** A summary can be wrong or miss things. The recorded text is handled as untrusted data (an agent's output can contain text that looks like instructions to the summarizer), the summary is shown as plain text, and it never recommends approving: the timeline stays the record.
-- Not verified against the real Anthropic API yet: it was tested with unit tests and against a local stand-in server that mimics the API. Try it once with your key.
+- Tried once against the real Anthropic API (`claude-opus-5-5`, one small demo session, summary returned as expected, about 540 tokens in and 430 out). Other models and long sessions were tested only against a local stand-in server.
 
 ## Gate a pull request without GitHub Actions
 

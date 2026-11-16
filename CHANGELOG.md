@@ -29,11 +29,12 @@ First release. The free, local tier works end to end. Install from source (see t
 - Codex 0.169.0: exit code 2 and a JSON deny both stop a shell command and an `apply_patch` call, also inside `codex exec`. A hook that outlives its timeout is **fail-open** in Codex, so the approval wait is capped at 540 s below the 600 s hook timeout.
 - The pull request gate, end to end on a real pull request (status as a required check, comment updated in place, status cleared by a new push).
 - Keychain storage of the API key on macOS.
+- The AI summary against the real Anthropic API (`claude-opus-5-5`, one small demo session). Other models and long sessions were tried only against a stand-in server.
 
 ### Known limitations
 
 - The policy is a safety net, not a sandbox; redaction is best effort; macOS and Linux only.
-- Not yet tried: the AI summary against the real Anthropic API (only a stand-in server), picture data from Claude Code hooks, the wording Codex shows when a hook blocks a call, and `Update`/`Delete` patches from a real Codex payload.
+- Not yet tried: picture data from Claude Code hooks, the wording Codex shows when a hook blocks a call, and `Update`/`Delete` patches from a real Codex payload.
 - Paid plans are still in planning; the related code in the repository is blocked and not part of this release.
 
 [Unreleased]: https://github.com/Trapa-Eureka/agent-review-desk/compare/v0.1.0...HEAD

@@ -40,7 +40,7 @@ It is built for development teams and agencies that use AI agents and need an au
 | `ard key set`: keep your Anthropic API key in the system keychain for the AI summary | Done (macOS, Linux with `secret-tool`) |
 | `ard pr-status` / `ard pr-comment`: your review as a commit status and a comment on a pull request, no GitHub Actions | Done (tried end to end on a real pull request) |
 | Multi-agent view in the review UI: per-agent overview, agent filter, `ard run` and hook sessions of one run linked | Done |
-| AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tested against a stand-in server, not the real API) |
+| AI summary of a session with your own Anthropic key (preview first, nothing sent without a second click) | Done (tried once against the real API with `claude-opus-5-5`) |
 | Screenshots in the review UI: attach one by hand with `ard screenshot`, or keep the pictures found in tool results (opt-in, local only) | Done (hook capture not yet verified against a real browser tool) |
 | Paid plans: shared team workspace, cloud sync, roles, single sign-on | Planned |
 
