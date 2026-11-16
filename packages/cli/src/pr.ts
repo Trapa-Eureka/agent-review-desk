@@ -115,6 +115,57 @@ export function summarizeReview(sessions: SessionSummary[]): ReviewSummary {
   return { state, description: description.slice(0, 140), total, approved, rejected, unreviewed };
 }
 
+/** How a session relates to the files the pull request changes. */
+export type Relevance = "touches" | "unknown" | "unrelated";
+
+export interface ClassifiedSession {
+  session: SessionSummary;
+  relevance: Relevance;
+  /** How many of the PR's files this session changed. */
+  overlap: number;
+}
+
+/**
+ * Which of these sessions belong to the pull request? The ones that changed at least one of the PR's files ("touches"). A
+ * session that recorded NO file change at all ("unknown": a read-only session, or an agent whose hooks cannot see edits,
+ * like Codex) is kept, because dropping a session we cannot judge would let unreviewed work through. A session that changed
+ * only files OUTSIDE the PR ("unrelated") is left out, and the commands say so.
+ *
+ * `prefix` is the project's folder inside the repository ("" when the project is the repository root), because the PR lists
+ * paths from the repository root and the recordings list them from the project root.
+ */
+export function classifySessions(sessions: SessionSummary[], prFiles: ReadonlySet<string>, prefix: string, cwd: string, env: NodeJS.ProcessEnv): ClassifiedSession[] {
+  const { repo } = openProject(findProjectRoot(cwd), env);
+  try {
+    return sessions.map((session) => {
+      const paths = new Set<string>();
+      for (const event of repo.sessionEvents(session.id)) if (event.type === "file_change") paths.add(event.path);
+      if (paths.size === 0) return { session, relevance: "unknown" as const, overlap: 0 };
+      let overlap = 0;
+      for (const path of paths) if (!path.startsWith("/") && prFiles.has(`${prefix}${path}`)) overlap++;
+      return { session, relevance: overlap > 0 ? ("touches" as const) : ("unrelated" as const), overlap };
+    });
+  } finally {
+    repo.close();
+  }
+}
+
+/** The files the pull request changes, as GitHub lists them (every page), or null when they cannot be read. */
+export function pullRequestFiles(run: RunFn, cwd: string, pr: PullRequest): Set<string> | null {
+  if (!REPO.test(pr.repo)) return null;
+  const result = run("gh", ["api", "--paginate", `repos/${pr.repo}/pulls/${pr.number}/files`, "--jq", ".[].filename"], undefined, cwd);
+  if (result.error || result.status !== 0) return null;
+  const files = result.stdout.split("\n").map((l) => l.trim()).filter((l) => l !== "" && l.length <= 1000);
+  return files.length > 0 ? new Set(files) : null;
+}
+
+/** Where the project sits inside its git repository ("" at the top, otherwise "sub/dir/"). */
+export function repositoryPrefix(run: RunFn, root: string): string {
+  const result = run("git", ["rev-parse", "--show-prefix"], undefined, root);
+  const prefix = result.stdout.trim();
+  return result.status === 0 && /^[^\n]*$/.test(prefix) && !prefix.startsWith("/") ? prefix : "";
+}
+
 export interface SelectOptions {
   /** Sessions named by hand. */
   sessions?: string[];
@@ -144,7 +195,7 @@ export function selectSessions(options: SelectOptions): SessionSummary[] {
 const cell = (text: string): string => text.replace(/[|\r\n]+/g, " ").slice(0, 120);
 
 /** The PR comment. Counts and decisions only: no code, no command output, no paths. */
-export function buildComment(pr: Pick<PullRequest, "number">, sessions: SessionSummary[], summary: ReviewSummary): string {
+export function buildComment(pr: Pick<PullRequest, "number">, sessions: SessionSummary[], summary: ReviewSummary, leftOut = 0): string {
   const headline = summary.state === "success" ? (summary.total === 0 ? "No agent sessions were recorded for this branch." : "Every agent session behind this branch was reviewed and approved.") : summary.state === "failure" ? "At least one agent session behind this branch was **rejected**." : "Some agent sessions behind this branch have **not been reviewed yet**.";
   const rows = sessions.map((s) => {
     const review = s.review ? `${s.review.decision} on ${s.review.at.slice(0, 10)}${s.review.note ? ` — “${cell(s.review.note)}”` : ""}` : "not reviewed";
@@ -158,6 +209,7 @@ export function buildComment(pr: Pick<PullRequest, "number">, sessions: SessionS
     headline,
     "",
     ...(rows.length > 0 ? ["| Agent | Started (UTC) | Tool calls | Commands | File changes | Review |", "|---|---|---|---|---|---|", ...rows, ""] : []),
+    ...(leftOut > 0 ? [`${leftOut} other agent session${leftOut === 1 ? "" : "s"} recorded since the branch started ${leftOut === 1 ? "was" : "were"} left out because ${leftOut === 1 ? "it" : "they"} changed only files outside this pull request.`, ""] : []),
     `<sub>Posted from a local \`ard pr-comment\` run for #${pr.number}. This lists counts and review decisions only, never code or command output. The reviews were made on the author's machine.</sub>`,
     "",
   ].join("\n");
@@ -201,26 +253,64 @@ export interface PrCommandOptions {
   pr?: string;
   sessions?: string[];
   dryRun: boolean;
+  /** Count every session since the branch started, even ones that changed only files outside the pull request. */
+  includeUnrelated?: boolean;
   context: string;
   run?: RunFn;
   out: (text: string) => void;
 }
 
-function gather(options: PrCommandOptions): { pr: PullRequest; sessions: SessionSummary[]; summary: ReviewSummary; run: RunFn; basis: string } {
+interface Gathered {
+  pr: PullRequest;
+  /** What the status and the comment are about. */
+  sessions: SessionSummary[];
+  /** Sessions that were found but left out because they changed only files outside this pull request. */
+  left: ClassifiedSession[];
+  /** Per included session, why it is included (for the printed list). */
+  why: Map<string, string>;
+  summary: ReviewSummary;
+  run: RunFn;
+  basis: string;
+}
+
+function gather(options: PrCommandOptions): Gathered {
   const run = options.run ?? defaultRun;
   const pr = resolvePullRequest(run, options.cwd, options.pr);
   const named = options.sessions && options.sessions.length > 0;
   const since = named ? undefined : branchStartedAt(run, options.cwd, pr.baseRef);
-  const sessions = selectSessions({ ...(named ? { sessions: options.sessions } : {}), ...(since ? { since } : {}), cwd: options.cwd, env: options.env });
-  return { pr, sessions, summary: summarizeReview(sessions), run, basis: named ? "sessions you named" : `sessions started since this branch left ${pr.baseRef} (${since})` };
+  const found = selectSessions({ ...(named ? { sessions: options.sessions } : {}), ...(since ? { since } : {}), cwd: options.cwd, env: options.env });
+
+  let sessions = found;
+  let left: ClassifiedSession[] = [];
+  const why = new Map<string, string>();
+  let basis = named ? "sessions you named" : `sessions started since this branch left ${pr.baseRef} (${since})`;
+  if (!named && !options.includeUnrelated) {
+    const files = pullRequestFiles(run, options.cwd, pr);
+    if (!files) {
+      basis += "; the PR's file list could not be read, so every one of them is included";
+    } else {
+      const classified = classifySessions(found, files, repositoryPrefix(run, findProjectRoot(options.cwd)), options.cwd, options.env);
+      sessions = classified.filter((c) => c.relevance !== "unrelated").map((c) => c.session);
+      left = classified.filter((c) => c.relevance === "unrelated");
+      for (const c of classified) why.set(c.session.id, c.relevance === "touches" ? `changed ${c.overlap} of this PR's files` : "no file changes recorded, so it cannot be ruled out");
+      basis += ", that changed this PR's files or recorded no file changes";
+    }
+  }
+  return { pr, sessions, left, why, summary: summarizeReview(sessions), run, basis };
 }
+
+const stamp = (s: SessionSummary): string => s.startedAt.slice(0, 16).replace("T", " ");
 
 export function runPrStatus(options: PrCommandOptions): number {
   if (!isValidContext(options.context)) throw new PrError("The status name may only contain letters, digits, . _ / - (at most 80 characters).");
-  const { pr, sessions, summary, run, basis } = gather(options);
+  const { pr, sessions, left, why, summary, run, basis } = gather(options);
   options.out(`Pull request #${pr.number} in ${pr.repo}, commit ${pr.headSha.slice(0, 7)}`);
   options.out(`Considering ${sessions.length} agent session${sessions.length === 1 ? "" : "s"} (${basis}):`);
-  for (const s of sessions) options.out(`  ${s.agent}  ${s.startedAt.slice(0, 16).replace("T", " ")}  ${s.review ? s.review.decision : "not reviewed"}`);
+  for (const s of sessions) options.out(`  ${s.agent}  ${stamp(s)}  ${(s.review ? s.review.decision : "not reviewed").padEnd(12)} ${why.get(s.id) ? `(${why.get(s.id)})` : ""}`.trimEnd());
+  if (left.length > 0) {
+    options.out(`Left out, because they changed only files outside this pull request (use --include-unrelated to count them):`);
+    for (const c of left) options.out(`  ${c.session.agent}  ${stamp(c.session)}  ${c.session.review ? c.session.review.decision : "not reviewed"}  id ${c.session.id}`);
+  }
   options.out(`Status "${options.context}": ${summary.state}: ${summary.description}`);
   if (options.dryRun) {
     options.out("Dry run: nothing was posted.");
@@ -232,8 +322,8 @@ export function runPrStatus(options: PrCommandOptions): number {
 }
 
 export function runPrComment(options: PrCommandOptions): number {
-  const { pr, sessions, summary, run, basis } = gather(options);
-  const body = buildComment(pr, sessions, summary);
+  const { pr, sessions, left, summary, run, basis } = gather(options);
+  const body = buildComment(pr, sessions, summary, left.length);
   options.out(`Pull request #${pr.number} in ${pr.repo}: ${sessions.length} agent session${sessions.length === 1 ? "" : "s"} (${basis}).`);
   if (options.dryRun) {
     options.out("Dry run: this comment would be posted:\n");

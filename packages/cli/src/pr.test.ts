@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { eventsPathFor, findProjectRoot, openProject, reviewSession, type RunFn, type RunResult } from "@ard/core";
 import { cleanEnv, fake, makeFakeProject } from "@ard/core/testutil";
 import { main, type Io } from "./cli.js";
@@ -18,7 +19,7 @@ interface Call {
 }
 
 /** `gh` and `git` in memory: records every call and answers like the real tools. */
-function fakeTools(over: { pr?: Record<string, unknown>; repo?: string; mergeBaseDate?: string; ownCommentId?: string; ghMissing?: boolean; statusError?: string } = {}) {
+function fakeTools(over: { pr?: Record<string, unknown>; repo?: string; mergeBaseDate?: string; ownCommentId?: string; ghMissing?: boolean; statusError?: string; prFiles?: string[]; prefix?: string } = {}) {
   const calls: Call[] = [];
   const run: RunFn = (command, args, input) => {
     calls.push({ command, args, ...(input === undefined ? {} : { input }) });
@@ -28,6 +29,8 @@ function fakeTools(over: { pr?: Record<string, unknown>; repo?: string; mergeBas
     if (key.startsWith("gh repo view")) return ok(`${over.repo ?? "o/r"}\n`);
     if (key.startsWith("git merge-base")) return ok(`${BASE_SHA}\n`);
     if (key.startsWith("git show")) return ok(`${over.mergeBaseDate ?? "2000-01-01T00:00:00+00:00"}\n`);
+    if (key.startsWith("git rev-parse --show-prefix")) return ok(`${over.prefix ?? ""}\n`);
+    if (command === "gh" && args.some((a) => /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/files$/.test(a))) return over.prFiles ? ok(`${over.prFiles.join("\n")}\n`) : bad("HTTP 404");
     if (key.startsWith("gh api user")) return ok("dana\n");
     if (command === "gh" && args[0] === "api" && args.includes("--paginate")) return ok(over.ownCommentId ? `${over.ownCommentId}\n` : "");
     if (command === "gh" && args[0] === "api" && args.includes("-X")) return over.statusError ? bad(over.statusError, 1) : ok("{}");
@@ -200,7 +203,7 @@ test("pr-comment creates the comment once and then UPDATES it, and only ever loo
     assert.deepEqual(create!.args, ["api", "-X", "POST", "repos/o/r/issues/7/comments", "--input", "-"]);
     assert.ok((JSON.parse(create!.input!) as { body: string }).body.startsWith(MARKER));
     assert.match(a.out.join("\n"), /Comment created/);
-    const lookup = first.calls.find((c) => c.args.includes("--paginate"))!;
+    const lookup = first.calls.find((c) => c.args.some((a) => a.endsWith("/comments")))!;
     assert.match(lookup.args.join(" "), /select\(\.user\.login == "dana"\)/, "never edits someone else's comment");
 
     const second = fakeTools({ ownCommentId: "98765" });
@@ -248,6 +251,127 @@ test("`ard pr-status` and `ard pr-comment` reject unknown arguments and a bad st
     const h = io(p.dir, p.env);
     assert.equal(await main(["pr-status", "--context", "bad name!", "--dry-run"], h.io), 1);
     assert.match(h.err.join("\n"), /status name/);
+  } finally {
+    p.cleanup();
+  }
+});
+
+// ------------------------------------------------------------ which sessions belong to the PR
+
+/** Four sessions: A edits src/a.ts, B edits docs/x.md, C changes no file, D edits both. A and D are approved; B and C are not reviewed. */
+function projectWithFileSessions() {
+  const p = makeFakeProject();
+  const env = cleanEnv({ CLAUDE_PROJECT_DIR: p.dir });
+  const session = (id: string, files: string[]) => {
+    recordClaudeHook(JSON.stringify({ session_id: id, cwd: p.dir, hook_event_name: "SessionStart", source: "startup" }), env);
+    if (files.length === 0) recordClaudeHook(JSON.stringify({ session_id: id, cwd: p.dir, hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: { stdout: "x", stderr: "" } }), env);
+    for (const file of files) recordClaudeHook(JSON.stringify({ session_id: id, cwd: p.dir, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: join(p.dir, file), content: "x" }, tool_response: { filePath: join(p.dir, file), type: "create" } }), env);
+  };
+  session("s-a", ["src/a.ts"]);
+  session("s-b", ["docs/x.md"]);
+  session("s-c", []);
+  session("s-d", ["src/a.ts", "docs/y.md"]);
+  const { repo } = openProject(findProjectRoot(p.dir), env);
+  for (const id of ["s-a", "s-d"]) reviewSession(repo, eventsPathFor(p.dir, env), p.dir, id, "approved", { by: "reviewer" });
+  repo.close();
+  return { ...p, env };
+}
+
+const dry = async (p: { dir: string; env: NodeJS.ProcessEnv }, tools: ReturnType<typeof fakeTools>, extra: { includeUnrelated?: boolean; sessions?: string[] } = {}) => {
+  const { runPrStatus } = await import("./pr.js");
+  const out: string[] = [];
+  runPrStatus({ cwd: p.dir, env: p.env, dryRun: true, context: "ard/review", run: tools.run, out: (t) => out.push(t), ...extra });
+  return out.join("\n");
+};
+
+test("sessions that changed the PR's files are included, ones that changed only other files are left out, and the output says which and why", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const text = await dry(p, fakeTools({ prFiles: ["src/a.ts", "README.md"] }));
+    assert.match(text, /Considering 3 agent sessions/);
+    assert.match(text, /that changed this PR's files or recorded no file changes/);
+    assert.match(text, /changed 1 of this PR's files/);
+    assert.match(text, /no file changes recorded, so it cannot be ruled out/);
+    assert.match(text, /Left out, because they changed only files outside this pull request/);
+    assert.match(text, /id s-b/);
+    assert.equal(/id s-a|id s-d|id s-c/.test(text), false, "only the unrelated one is listed as left out");
+    // A and D approved; C (cannot be ruled out) is not: the gate stays pending rather than waving it through.
+    assert.match(text, /pending: 1 of 3 agent sessions still needs review/);
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("an unrelated session that is not reviewed does NOT block the PR; a session that cannot be judged still does", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const { repo } = openProject(findProjectRoot(p.dir), p.env);
+    reviewSession(repo, eventsPathFor(p.dir, p.env), p.dir, "s-c", "approved", { by: "reviewer" });
+    repo.close();
+    const text = await dry(p, fakeTools({ prFiles: ["src/a.ts"] }));
+    assert.match(text, /success: All 3 agent sessions approved/, "s-b is unreviewed but unrelated");
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("--include-unrelated counts every session since the branch started", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const text = await dry(p, fakeTools({ prFiles: ["src/a.ts"] }), { includeUnrelated: true });
+    assert.match(text, /Considering 4 agent sessions/);
+    assert.equal(text.includes("Left out"), false);
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("if GitHub's file list cannot be read, every session since the branch started is kept (the safe direction) and the output says so", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const text = await dry(p, fakeTools());
+    assert.match(text, /Considering 4 agent sessions/);
+    assert.match(text, /the PR's file list could not be read, so every one of them is included/);
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("a project inside a bigger repository: recorded paths are matched against the PR's repository-root paths", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const text = await dry(p, fakeTools({ prFiles: ["packages/app/src/a.ts"], prefix: "packages/app/" }));
+    assert.match(text, /Considering 3 agent sessions/);
+    assert.match(text, /id s-b/);
+    // without the prefix the same PR matches nothing: only the session that cannot be judged remains
+    const wrong = await dry(p, fakeTools({ prFiles: ["packages/app/src/a.ts"] }));
+    assert.match(wrong, /Considering 1 agent session/);
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("naming sessions with --session skips the file guessing entirely", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const tools = fakeTools({ prFiles: ["README.md"] });
+    const text = await dry(p, tools, { sessions: ["s-b"] });
+    assert.match(text, /Considering 1 agent session \(sessions you named\)/);
+    assert.equal(tools.calls.some((c) => c.args.some((a) => a.includes("/pulls/"))), false, "the PR's files were not even asked for");
+  } finally {
+    p.cleanup();
+  }
+});
+
+test("the comment mentions only HOW MANY sessions were left out, never which files or sessions", async () => {
+  const p = projectWithFileSessions();
+  try {
+    const { runPrComment } = await import("./pr.js");
+    const out: string[] = [];
+    runPrComment({ cwd: p.dir, env: p.env, dryRun: true, context: "x", run: fakeTools({ prFiles: ["src/a.ts"] }).run, out: (t) => out.push(t) });
+    const text = out.join("\n");
+    assert.match(text, /1 other agent session recorded since the branch started was left out because it changed only files outside this pull request\./);
+    for (const leak of ["docs/x.md", "docs/y.md", "src/a.ts", "s-b"]) assert.equal(text.includes(leak), false, leak);
   } finally {
     p.cleanup();
   }

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { formatDuration } from "@ard/core";
+import { formatDuration, linkedSessions } from "@ard/core";
 import ApprovalCard from "../../../components/ApprovalCard";
+import LinkedSessions from "../../../components/LinkedSessions";
 import SummaryPanel from "../../../components/SummaryPanel";
 import AutoRefresh from "@ard/ui/AutoRefresh";
 import DecisionForm from "@ard/ui/DecisionForm";
@@ -19,11 +20,12 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
     return {
       session,
       events: repo.sessionEvents(id),
+      links: linkedSessions(repo.listSessions(500), session),
       pending: repo.requestsForSession(id).filter((r) => r.status === "pending" && Date.parse(r.expiresAt) > Date.now()),
     };
   });
   if (!data) notFound();
-  const { session, events, pending } = data;
+  const { session, events, pending, links } = data;
 
   return (
     <>
@@ -72,6 +74,8 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         <DecisionForm endpoint={`/api/sessions/${encodeURIComponent(session.id)}/review`} approveLabel="Approve session" rejectLabel="Reject session" />
         <p className="muted small">You can change your decision later; the newest one is shown, and all of them stay in the log.</p>
       </section>
+
+      <LinkedSessions links={links} />
 
       <SummaryPanel sessionId={session.id} />
 

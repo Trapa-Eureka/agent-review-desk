@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { SessionSummary } from "@ard/core";
-import { formatDuration } from "@ard/core";
+import { filterByAgent, formatDuration, linkedSessions, summarizeByAgent } from "@ard/core";
+import AgentOverview from "../components/AgentOverview";
 import ApprovalCard from "../components/ApprovalCard";
 import AutoRefresh from "@ard/ui/AutoRefresh";
 import { dateTime, shortId, tidyPath } from "@ard/ui/present";
@@ -22,12 +23,40 @@ function Status({ session, now }: { session: SessionSummary; now: number }) {
   );
 }
 
-export default function Home() {
-  const { sessions, pending } = withProject(({ repo }) => ({
-    sessions: repo.listSessions(100),
+const TABLE_LIMIT = 100;
+
+function LinkHint({ session, all }: { session: SessionSummary; all: SessionSummary[] }) {
+  const { wrapper, hooks } = linkedSessions(all, session);
+  if (wrapper) {
+    return (
+      <div className="muted small">
+        inside an <Link href={`/sessions/${encodeURIComponent(wrapper.id)}`}>ard run</Link> session
+      </div>
+    );
+  }
+  if (hooks.length > 0) {
+    return (
+      <div className="muted small">
+        also recorded by {hooks.length === 1 ? <Link href={`/sessions/${encodeURIComponent(hooks[0]!.id)}`}>its hooks</Link> : `${hooks.length} hook sessions`}
+      </div>
+    );
+  }
+  return null;
+}
+
+export default async function Home({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const { agent: agentParam } = await searchParams;
+  const { all, pending } = withProject(({ repo }) => ({
+    all: repo.listSessions(500),
     pending: repo.listApprovalRequests({ status: "pending" }),
   }));
   const now = Date.now();
+  const overview = summarizeByAgent(all);
+  const requested = typeof agentParam === "string" && agentParam !== "" ? agentParam : null;
+  // Only an agent that really has sessions is accepted as a filter; anything else is shown as "no such agent", never trusted.
+  const selected = requested !== null && overview.some((row) => row.agent === requested) ? requested : null;
+  const filtered = filterByAgent(all, selected);
+  const sessions = filtered.slice(0, TABLE_LIMIT);
 
   return (
     <>
@@ -41,8 +70,17 @@ export default function Home() {
         </section>
       ) : null}
 
+      <AgentOverview rows={overview} selected={selected} total={all.length} />
+
       <section aria-label="Sessions">
-        <h1>Sessions</h1>
+        <h1>
+          Sessions{selected ? <span className="muted"> · {selected}</span> : null}
+        </h1>
+        {requested !== null && selected === null ? (
+          <p className="muted">
+            No sessions from an agent called “{requested}”. <Link href="/">Show all agents</Link>
+          </p>
+        ) : null}
         {sessions.length === 0 ? (
           <div className="empty">
             <p>No sessions recorded yet.</p>
@@ -71,7 +109,10 @@ export default function Home() {
                       {shortId(session.id)} · {formatDuration(Date.parse(session.lastEventAt) - Date.parse(session.startedAt)) || "—"}
                     </div>
                   </td>
-                  <td>{session.agent}</td>
+                  <td>
+                    {session.agent}
+                    <LinkHint session={session} all={all} />
+                  </td>
                   <td className="path">{tidyPath(session.cwd)}</td>
                   <td className="num">{session.counts.commands}</td>
                   <td className="num">{session.counts.fileChanges}</td>
@@ -85,6 +126,7 @@ export default function Home() {
             </tbody>
           </table>
         )}
+        {filtered.length > TABLE_LIMIT ? <p className="muted small">Showing the newest {TABLE_LIMIT} of {filtered.length} sessions.</p> : null}
       </section>
     </>
   );

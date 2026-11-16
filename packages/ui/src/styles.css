@@ -494,3 +494,16 @@ details > summary {
   max-height: 22rem;
   overflow: auto;
 }
+
+/* multi-agent view */
+.agents table {
+  margin-bottom: 1.5rem;
+}
+.agents tr.current td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-weight: 600;
+}
+.linked ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}

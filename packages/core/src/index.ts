@@ -30,3 +30,4 @@ export function openProject(root: string, env: NodeJS.ProcessEnv = process.env):
 }
 export * from "./screenshots.js";
 export * from "./keystore.js";
+export * from "./agents.js";

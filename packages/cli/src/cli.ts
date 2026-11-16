@@ -101,14 +101,16 @@ Usage:
       showing it (or reads it from a pipe: pbpaste | ard key set). The key is never written to a project folder,
       never printed, and goes only to Anthropic when you ask for a summary. ANTHROPIC_API_KEY, if set, wins.
 
-  ard pr-status [--pr <number>] [--session <id>]... [--context <name>] [--dry-run]
+  ard pr-status [--pr <number>] [--session <id>]... [--include-unrelated] [--context <name>] [--dry-run]
       Post a commit status (default name ard/review) on a pull request, from YOUR machine with the GitHub CLI:
       success when the agent sessions behind the branch were approved in "ard review", failure if one was rejected,
       pending if some are not reviewed. Require that status in the branch protection settings to block a merge until
       you have reviewed. No GitHub Actions needed. Post it again after each push (a status belongs to one commit).
-      Without --session, the sessions are those that started since the branch left its base: a guess, so check the list.
+      Without --session, the sessions are those that started since the branch left its base AND changed this PR's
+      files (or recorded no file changes at all, so they cannot be ruled out). Sessions that changed only other
+      files are listed as left out; --include-unrelated counts them anyway. It is still a guess: check the list.
 
-  ard pr-comment [--pr <number>] [--session <id>]... [--dry-run]
+  ard pr-comment [--pr <number>] [--session <id>]... [--include-unrelated] [--dry-run]
       Post (or update) a pull request comment listing those sessions and their review decisions. Counts and decisions
       only: never code or command output. --dry-run prints it and posts nothing.
 
@@ -288,6 +290,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
     case "pr-comment": {
       const args = [...rest];
       const dryRun = takeFlag(args, "--dry-run");
+      const includeUnrelated = takeFlag(args, "--include-unrelated");
       const pr = takeValue(args, "--pr");
       const context = (command === "pr-status" ? takeValue(args, "--context") : undefined) ?? DEFAULT_CONTEXT;
       const sessions: string[] = [];
@@ -297,7 +300,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
         return 2;
       }
       try {
-        const options = { cwd: io.cwd, env: io.env, ...(pr === undefined ? {} : { pr }), ...(sessions.length > 0 ? { sessions } : {}), dryRun, context, out: io.out };
+        const options = { cwd: io.cwd, env: io.env, ...(pr === undefined ? {} : { pr }), ...(sessions.length > 0 ? { sessions } : {}), dryRun, includeUnrelated, context, out: io.out };
         return command === "pr-status" ? runPrStatus(options) : runPrComment(options);
       } catch (error) {
         io.err(`ard ${command}: ${error instanceof PrError || error instanceof Error ? error.message : String(error)}`);
